@@ -27,10 +27,14 @@ Requires Node 18+.
 
 ## Project structure
 ```
-sql/                 # the three BigQuery queries (edit these as plain .sql files)
+sql/                 # the BigQuery queries (edit these as plain .sql files)
   evaluation.sql     # New Show Evaluation v1.4
-  fatigue.sql        # Content Fatigue Monitor v6
+  fatigue.sql        # Content Fatigue Monitor v6 (episode retention / failure modes)
   hdc.sql            # HDC label query
+  live_performance_snapshot.sql  # CMS source of truth for H123 views + completion/verdict
+                                 #   (content_metrics_run_log_v2). Merge its columns into the
+                                 #   Fatigue CSV — the tool reads views / completion_rate /
+                                 #   comp_verdict / snapshot_tag with fallbacks.
 lib/                 # pure logic, no React
   format.js          # formatters, LANG_NAMES, date helpers
   constants.js       # required columns, ACTION_META, TABS, UPLOAD_META
