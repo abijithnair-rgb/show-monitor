@@ -1591,4 +1591,89 @@ HAVING video_plays >= 20
 ORDER BY avg_min_per_play DESC
 ) t
 
+UNION ALL
+SELECT 'meta' AS dataset, TO_JSON_STRING(t) AS row_json FROM (
+-- Show metadata: canonical state, BU, owner, designer, cadence per show.
+-- The tool uses `state` to drop draft/deleted shows. Scoped to the 5 main languages.
+WITH bu_mapping AS (
+  SELECT category_id, 'Awareness' AS bu_name FROM UNNEST([71,80,64,67,94,68,6,79,66,2,89,5,52,69,38,17,82,62,92,18,13,54,58,61,55,59,8,57,35,25,29,40,14,43,60,21,27,19,51,53,32,33,91,109,65,97,9,106,78,111,83,75,34,105,76,95,10,108,114,115,116,117,121]) AS category_id
+  UNION ALL
+  SELECT category_id, 'Income' FROM UNNEST([73,63,16,70,56,11,50,85,72,84,39,37,30,45,81,98,96]) AS category_id
+  UNION ALL
+  SELECT category_id, 'Skill' FROM UNNEST([88,77,4,86,90,49,74,107,48,46,103,1,12,42,7,3,22,23,15,47,28,44,36,31,100,101,20,93,102,41,99,24,110,104,87,112,113,118,119,120]) AS category_id
+),
+
+show_meta AS (
+  SELECT
+    sm.show_id,
+    sm.frequency                                   AS freq,
+    sm.designer_id,
+    ARRAY_TO_STRING(
+      ARRAY(
+        SELECT
+          CASE pd.value
+            WHEN 0 THEN 'Mon'
+            WHEN 1 THEN 'Tue'
+            WHEN 2 THEN 'Wed'
+            WHEN 3 THEN 'Thu'
+            WHEN 4 THEN 'Fri'
+            WHEN 5 THEN 'Sat'
+            WHEN 6 THEN 'Sun'
+          END
+        FROM UNNEST(sm.publishing_days) AS pd
+        ORDER BY pd.value
+      ),
+      ' | '
+    )                                              AS specific_freq
+  FROM `seekho-c084b.seekhoproddynamodb.show_metadata_prod` sm
+)
+
+SELECT
+  cs.language,
+  cs.id                                            AS show_id,
+  cs.title                                         AS show_name,
+  sm.freq,
+  sm.specific_freq,
+  sd.show_manager,
+  CONCAT(
+    COALESCE(au.first_name, ''),
+    CASE WHEN au.last_name IS NOT NULL AND au.last_name != ''
+         THEN CONCAT(' ', au.last_name) ELSE '' END
+  )                                                AS designer_name,
+  sm.designer_id,
+  cs.show_type,
+  cs.state,
+  cs.category_id,
+  cc.title                                         AS category_name,
+  bm.bu_name
+
+FROM `seekho-c084b.seekho.courses_show` cs
+
+LEFT JOIN show_meta sm
+  ON cs.id = sm.show_id
+
+LEFT JOIN (
+  SELECT DISTINCT show_id, show_manager
+  FROM `seekho-c084b.analytics_content.show_detail`
+) sd
+  ON cs.id = sd.show_id
+
+LEFT JOIN (
+  SELECT id, first_name, last_name
+  FROM `seekho-c084b.seekho.auth_user`
+) au
+  ON sm.designer_id = au.id
+
+LEFT JOIN (
+  SELECT id AS category_id, title
+  FROM `seekho-c084b.seekho.courses_category`
+) cc
+  ON cs.category_id = cc.category_id
+
+LEFT JOIN bu_mapping bm
+  ON cs.category_id = bm.category_id
+
+WHERE cs.language IN ('hi','ta','te','ml','kn')
+) t
+
 ORDER BY dataset

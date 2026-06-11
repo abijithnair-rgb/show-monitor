@@ -36,6 +36,7 @@ export default function CombinedUploadCard() {
       if (res.fat.length) parts.push(`${fmtNum(res.fat.length)} fatigue`);
       if (res.hdc.length) parts.push(`${fmtNum(res.hdc.length)} hdc`);
       if (res.ts.length) parts.push(`${fmtNum(res.ts.length)} time-spent`);
+      if (res.showmeta.length) parts.push(`${fmtNum(res.showmeta.length)} meta`);
       toast(`Loaded ${parts.join(' · ')}`);
     });
   }
