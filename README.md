@@ -1,4 +1,4 @@
-# Seekho Show Intelligence
+# Seekho Show Monitor
 
 A web app that joins two Seekho analyses on `show_id` and reconciles them into **one recommendation per show**:
 

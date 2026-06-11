@@ -35,6 +35,7 @@ export default function CombinedUploadCard() {
       if (res.eval.length) parts.push(`${fmtNum(res.eval.length)} eval`);
       if (res.fat.length) parts.push(`${fmtNum(res.fat.length)} fatigue`);
       if (res.hdc.length) parts.push(`${fmtNum(res.hdc.length)} hdc`);
+      if (res.ts.length) parts.push(`${fmtNum(res.ts.length)} time-spent`);
       toast(`Loaded ${parts.join(' · ')}`);
     });
   }
@@ -43,8 +44,8 @@ export default function CombinedUploadCard() {
     <div className="card p-4">
       <div className="flex items-center justify-between gap-2 mb-1">
         <div>
-          <div className="font-semibold">Combined CSV — all three datasets</div>
-          <div className="hint">One query (Evaluation + Fatigue + HDC) → one CSV → one upload</div>
+          <div className="font-semibold">Combined CSV — all four datasets</div>
+          <div className="hint">One query (Evaluation + Fatigue + HDC + Time-spent) → one CSV → one upload</div>
         </div>
         <span className={'chip ' + (loaded ? 'chip-green' : 'chip-light')}>{loaded ? '✓ loaded' : 'not loaded'}</span>
       </div>

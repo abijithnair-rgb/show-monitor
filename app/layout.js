@@ -2,7 +2,7 @@ import './globals.css';
 import ChatBot from '@/components/ChatBot';
 
 export const metadata = {
-  title: 'Seekho Show Intelligence',
+  title: 'Seekho Show Monitor',
   description: 'Lifecycle verdict × fatigue diagnosis — reconciled into one call per show.',
 };
 

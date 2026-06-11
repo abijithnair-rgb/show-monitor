@@ -6,12 +6,13 @@ import { buildContext } from '@/lib/buildContext';
 const BOT_NAME = 'Seekho Show Master';
 const TAGLINE = 'Lifecycle × fatigue, reconciled.';
 
+// First-touch quick picks help the bot scope to the user's slice.
 const SUGGESTIONS = [
-  'Which shows should we stop right now?',
-  'Summarise the shows that need a creative fix.',
-  'Draft a Slack report of this week’s stop / scale decisions.',
-  'Which shows are slipping vs their language peers?',
-  'What’s the way forward for the lowest fatigue-score shows?',
+  'I work on Hindi — Awareness BU',
+  'I work on Hindi — Income BU',
+  'I work on Hindi — Skill BU',
+  'I work on Telugu (whole language)',
+  'Skip — give me the whole-product view',
 ];
 
 const PEEK_MESSAGES = [
@@ -146,11 +147,35 @@ export default function ChatBot() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: next, context }),
       });
-      const json = await res.json();
-      if (!res.ok || json.error) {
+      const ct = res.headers.get('content-type') || '';
+      // Error responses come back as JSON with a proper status.
+      if (!res.ok || ct.includes('application/json') || !res.body) {
+        const json = await res.json().catch(() => ({}));
         setError(json.error || `Request failed (HTTP ${res.status}).`);
-      } else {
-        setMessages((m) => [...m, { role: 'assistant', content: json.content || '(empty response)' }]);
+        return;
+      }
+      // Stream the reply token-by-token into a growing assistant bubble.
+      setMessages((m) => [...m, { role: 'assistant', content: '' }]);
+      setLoading(false);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let acc = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        acc += decoder.decode(value, { stream: true });
+        setMessages((m) => {
+          const copy = [...m];
+          copy[copy.length - 1] = { role: 'assistant', content: acc };
+          return copy;
+        });
+      }
+      if (!acc.trim()) {
+        setMessages((m) => {
+          const copy = [...m];
+          copy[copy.length - 1] = { role: 'assistant', content: '(empty response)' };
+          return copy;
+        });
       }
     } catch (e) {
       setError(e.message || 'Network error.');
@@ -225,7 +250,7 @@ export default function ChatBot() {
           <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3 bg-slate-50">
             {messages.length === 0 && (
               <div className="space-y-3">
-                <AssistantBubble text={`Hi! I’m ${BOT_NAME}. I read your dashboard data and can answer questions, analyse shows, recommend actions, and draft Slack-ready reports. Ask me anything — or try one of these:`} />
+                <AssistantBubble text={`Hi! I’m ${BOT_NAME}. To tailor my answers, tell me what you own: which language do you work on — Hindi, Telugu, Tamil, Malayalam, or Kannada? If it’s Hindi, also tell me your BU (Awareness, Income, or Skill). Working across everything? Just say so or ask your question directly.`} />
                 <div className="flex flex-col gap-2">
                   {SUGGESTIONS.map((q) => (
                     <button

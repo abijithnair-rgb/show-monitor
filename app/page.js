@@ -50,7 +50,7 @@ export default function Page() {
         <div className="max-w-[1320px] mx-auto px-5 py-3 flex items-center gap-3">
           <Logo />
           <div>
-            <div className="font-semibold leading-tight">Seekho Show Intelligence</div>
+            <div className="font-semibold leading-tight">Seekho Show Monitor</div>
             <div className="text-xs text-slate-500 leading-tight">Lifecycle verdict × fatigue diagnosis — reconciled into one call per show.</div>
           </div>
           <Nav />

@@ -87,7 +87,7 @@ function DeepBody({ s, data }) {
     <div>
       <div className="flex items-center gap-2 flex-wrap mb-2" dangerouslySetInnerHTML={{ __html: headHtml }} />
       <div className={`banner ${recTone} mb-4`} style={{ display: 'block' }} dangerouslySetInnerHTML={{ __html: bannerHtml }} />
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4" dangerouslySetInnerHTML={{ __html: kpiGrid(s, data, fobj) }} />
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4" dangerouslySetInnerHTML={{ __html: kpiGrid(s, data, fobj) }} />
 
       {data.hdcRows && <div dangerouslySetInnerHTML={{ __html: hdcCard(hdc, s, data.hdcRows) }} />}
 

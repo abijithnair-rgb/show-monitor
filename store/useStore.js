@@ -4,12 +4,12 @@ import { sampleData } from '@/lib/sample';
 
 // Global app state (replaces the original mutable `state` object).
 export const useStore = create((set, get) => ({
-  evalRows: null, fatRows: null, hdcRows: null, snapRows: null,
-  evalMeta: null, fatMeta: null, hdcMeta: null, snapMeta: null,
+  evalRows: null, fatRows: null, hdcRows: null, snapRows: null, tsRows: null,
+  evalMeta: null, fatMeta: null, hdcMeta: null, snapMeta: null, tsMeta: null,
   hydrated: false,
 
   tab: 'data',
-  filters: { language: '', category: '', status: '', action: '', agreement: '' },
+  filters: { language: '', category: '', bu: '', status: '', action: '', agreement: '' },
   search: '',
   sortBy: 'lifecycle',
   deepDiveId: null,
@@ -20,15 +20,15 @@ export const useStore = create((set, get) => ({
   data: () => {
     const s = get();
     return {
-      evalRows: s.evalRows, fatRows: s.fatRows, hdcRows: s.hdcRows, snapRows: s.snapRows,
-      evalMeta: s.evalMeta, fatMeta: s.fatMeta, hdcMeta: s.hdcMeta, snapMeta: s.snapMeta,
+      evalRows: s.evalRows, fatRows: s.fatRows, hdcRows: s.hdcRows, snapRows: s.snapRows, tsRows: s.tsRows,
+      evalMeta: s.evalMeta, fatMeta: s.fatMeta, hdcMeta: s.hdcMeta, snapMeta: s.snapMeta, tsMeta: s.tsMeta,
     };
   },
 
   // ---- UI setters ----
   setTab: (tab) => set({ tab }),
   setFilter: (key, value) => set((st) => ({ filters: { ...st.filters, [key]: value } })),
-  resetFilters: () => set({ filters: { language: '', category: '', status: '', action: '', agreement: '' }, search: '' }),
+  resetFilters: () => set({ filters: { language: '', category: '', bu: '', status: '', action: '', agreement: '' }, search: '' }),
   setSearch: (search) => set({ search }),
   setSortBy: (sortBy) => set({ sortBy }),
   setDeepDiveId: (deepDiveId) => set({ deepDiveId }),
@@ -42,6 +42,7 @@ export const useStore = create((set, get) => ({
     await idbSet('fat', s.fatRows ? { rows: s.fatRows, meta: s.fatMeta } : null);
     await idbSet('hdc', s.hdcRows ? { rows: s.hdcRows, meta: s.hdcMeta } : null);
     await idbSet('snap', s.snapRows ? { rows: s.snapRows, meta: s.snapMeta } : null);
+    await idbSet('ts', s.tsRows ? { rows: s.tsRows, meta: s.tsMeta } : null);
   },
 
   hydrate: async () => {
@@ -49,12 +50,14 @@ export const useStore = create((set, get) => ({
       const e = await idbGet('eval'),
         f = await idbGet('fat'),
         hd = await idbGet('hdc'),
-        sn = await idbGet('snap');
+        sn = await idbGet('snap'),
+        ts = await idbGet('ts');
       const patch = { hydrated: true };
       if (e && e.rows) { patch.evalRows = e.rows; patch.evalMeta = e.meta; }
       if (f && f.rows) { patch.fatRows = f.rows; patch.fatMeta = f.meta; }
       if (hd && hd.rows) { patch.hdcRows = hd.rows; patch.hdcMeta = hd.meta; }
       if (sn && sn.rows) { patch.snapRows = sn.rows; patch.snapMeta = sn.meta; }
+      if (ts && ts.rows) { patch.tsRows = ts.rows; patch.tsMeta = ts.meta; }
       patch.tab = patch.evalRows || patch.fatRows ? 'explorer' : 'data';
       set(patch);
     } catch (err) {
@@ -73,11 +76,12 @@ export const useStore = create((set, get) => ({
   },
 
   // Set all three datasets from a single combined upload (only non-empty buckets replace).
-  setCombined: async ({ eval: ev, fat, hdc, meta }) => {
+  setCombined: async ({ eval: ev, fat, hdc, ts, meta }) => {
     const patch = {};
     if (ev && ev.length) { patch.evalRows = ev; patch.evalMeta = meta.eval; }
     if (fat && fat.length) { patch.fatRows = fat; patch.fatMeta = meta.fat; }
     if (hdc && hdc.length) { patch.hdcRows = hdc; patch.hdcMeta = meta.hdc; }
+    if (ts && ts.length) { patch.tsRows = ts; patch.tsMeta = meta.ts; }
     set(patch);
     await get().persist();
   },
@@ -89,16 +93,18 @@ export const useStore = create((set, get) => ({
       evalRows: S.eval, evalMeta: mk('sample_eval.csv', S.eval),
       fatRows: S.fat, fatMeta: mk('sample_fatigue.csv', S.fat),
       hdcRows: S.hdc, hdcMeta: mk('sample_hdc.csv', S.hdc),
+      tsRows: S.ts, tsMeta: S.ts && S.ts.length ? mk('sample_timespent.csv', S.ts) : null,
       tab: 'explorer',
     });
     await get().persist();
   },
 
   clearAll: async () => {
-    set({ evalRows: null, fatRows: null, hdcRows: null, snapRows: null, evalMeta: null, fatMeta: null, hdcMeta: null, snapMeta: null, tab: 'data' });
+    set({ evalRows: null, fatRows: null, hdcRows: null, snapRows: null, tsRows: null, evalMeta: null, fatMeta: null, hdcMeta: null, snapMeta: null, tsMeta: null, tab: 'data' });
     await idbDel('eval');
     await idbDel('fat');
     await idbDel('hdc');
     await idbDel('snap');
+    await idbDel('ts');
   },
 }));

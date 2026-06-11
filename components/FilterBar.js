@@ -14,6 +14,7 @@ export default function FilterBar({ model, hideAgreement }) {
   const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort();
   const langs = uniq(model.map((s) => s.language));
   const cats = uniq(model.map((s) => s.category));
+  const bus = uniq(model.map((s) => s.bu));
   const stats = uniq(model.map((s) => s.status));
   const acts = [...new Set(model.map((s) => s.rec.key))];
 
@@ -36,6 +37,7 @@ export default function FilterBar({ model, hideAgreement }) {
   return (
     <div className="flex flex-wrap gap-3 items-end mb-3">
       <Dd label="Language" k="language" options={langs} fmt={(l) => LANG_NAMES[l] || l} />
+      <Dd label="BU" k="bu" options={bus} />
       <Dd label="Category" k="category" options={cats} />
       <Dd label="Status" k="status" options={stats} fmt={(s) => s[0].toUpperCase() + s.slice(1)} />
       <Dd label="Recommendation" k="action" options={acts} fmt={(k) => (ACTION_META[k] || { label: k }).label} />
@@ -60,6 +62,7 @@ export default function FilterBar({ model, hideAgreement }) {
 export function applyFilters(model, filters, search) {
   let m = model;
   if (filters.language) m = m.filter((s) => s.language === filters.language);
+  if (filters.bu) m = m.filter((s) => s.bu === filters.bu);
   if (filters.category) m = m.filter((s) => s.category === filters.category);
   if (filters.status) m = m.filter((s) => s.status === filters.status);
   if (filters.action) m = m.filter((s) => s.rec.key === filters.action);

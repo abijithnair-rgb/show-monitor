@@ -51,7 +51,7 @@ export default function DataTab() {
     <div>
       <h2 className="text-xl font-semibold mb-1">Load the data</h2>
       <p className="text-sm text-slate-500 mb-4">
-        Run the single combined query in Redash, download it as one CSV, and drop it below. Everything stays in your browser (IndexedDB). It carries all three datasets — Evaluation + Fatigue power the Explorer; HDC adds supply &amp; label metrics in Deep Dive.
+        Run the single combined query in Redash, download it as one CSV, and drop it below. Everything stays in your browser (IndexedDB). It carries all four datasets — Evaluation + Fatigue power the Explorer; HDC adds supply &amp; label metrics and Time-spent adds avg watch minutes per play in Deep Dive.
       </p>
       {joinNote}
       {hdcNote}

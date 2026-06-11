@@ -1532,4 +1532,63 @@ SELECT
 FROM series_with_thresholds
 ORDER BY publish_date DESC, views_24h DESC
 ) t
+
+UNION ALL
+SELECT 'timespent' AS dataset, TO_JSON_STRING(t) AS row_json FROM (
+-- Per-show watch hours, unique users, and avg minutes per video play
+-- Window: D-8 to D-2 IST (rolling 7d, excluding today and yesterday)
+-- Source: content_recommendation.video_play_combined
+-- Scope: Seekho main (Android + iOS) + Nerchuko (te) + Arivu (ta) + Kalike (kn) + Vidhya (ml)
+WITH plays AS (
+  SELECT
+    SAFE_CAST(p.series_id AS INT64) AS series_id,
+    p.firebase_uid,
+    p.watchtime
+  FROM `seekho-c084b.content_recommendation.video_play_combined` p
+  WHERE DATE(p.timestamp, 'Asia/Kolkata')
+        BETWEEN DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 8 DAY)
+            AND DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 2 DAY)
+    AND p.watchtime IS NOT NULL
+    AND p.watchtime > 0
+    -- Limit to the 6 in-scope apps; excludes Bolo, Seekho Jr, SeekhoAI
+    AND p.package_name IN (
+      'com.seekho.android', 'com.seekho.ios',
+      'com.nerchuko.android', 'com.arivu.android',
+      'com.kalike.android', 'com.vidhya.android'
+    )
+),
+enriched AS (
+  SELECT
+    cs.show_id,
+    csh.title  AS show_title,
+    cs.language,
+    cat.title  AS category_title,
+    p.firebase_uid,
+    p.watchtime
+  FROM plays p
+  -- video_play_combined.series_id is STRING; courses_series.id is INT64
+  JOIN `seekho-c084b.seekho.courses_series` cs
+    ON p.series_id = cs.id
+  JOIN `seekho-c084b.seekho.courses_show` csh
+    ON cs.show_id = csh.id
+  LEFT JOIN `seekho-c084b.seekho.courses_category` cat
+    ON csh.category_id = cat.id
+  WHERE cs.language IN ('hi','ta','te','ml','kn')
+    AND cs.state IN ('live','expired')
+)
+SELECT
+  show_id,
+  show_title,
+  language,
+  category_title,
+  COUNT(DISTINCT firebase_uid)    AS unique_users,
+  COUNT(*)                        AS video_plays,
+  ROUND(SUM(watchtime) / 3600, 2) AS watch_hours,
+  ROUND(AVG(watchtime) / 60, 2)   AS avg_min_per_play
+FROM enriched
+GROUP BY 1, 2, 3, 4
+HAVING video_plays >= 20
+ORDER BY avg_min_per_play DESC
+) t
+
 ORDER BY dataset
