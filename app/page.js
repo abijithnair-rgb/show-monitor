@@ -46,12 +46,12 @@ export default function Page() {
 
   return (
     <>
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-40">
+      <header className="bg-black border-b border-slate-800 sticky top-0 z-40">
         <div className="max-w-[1320px] mx-auto px-5 py-3 flex items-center gap-3">
           <Logo />
           <div>
-            <div className="font-semibold leading-tight">Seekho Show Monitor</div>
-            <div className="text-xs text-slate-500 leading-tight">Lifecycle verdict × fatigue diagnosis — reconciled into one call per show.</div>
+            <div className="font-semibold leading-tight text-white">Seekho Show Monitor</div>
+            <div className="text-xs text-slate-400 leading-tight">Lifecycle verdict × fatigue diagnosis — reconciled into one call per show.</div>
           </div>
           <Nav />
         </div>

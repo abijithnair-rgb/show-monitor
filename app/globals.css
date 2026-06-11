@@ -20,15 +20,18 @@ body {
 .tab-btn {
   padding: 10px 16px;
   font-size: 14px;
-  color: #64748b;
+  color: #94a3b8;
   border-bottom: 2px solid transparent;
   cursor: pointer;
   white-space: nowrap;
   background: transparent;
 }
+.tab-btn:hover:not(:disabled) {
+  color: #e2e8f0;
+}
 .tab-btn.active {
-  color: #0f172a;
-  border-bottom-color: #0f172a;
+  color: #fff;
+  border-bottom-color: #fff;
   font-weight: 600;
 }
 .tab-btn:disabled {
