@@ -27,6 +27,23 @@ WITH params AS (
     DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 1  DAY) AS window_end,
     DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 35 DAY) AS lookback_start
 ),
+-- H123 VIEWS — source of truth is the CMS view-count table. `starts` is a
+-- cumulative counter, so we take the row with the MAX starts per series (the
+-- most-complete reading = what the CMS UI shows). A later-computed snapshot can
+-- hold a lower starts, so ordering by computed_at would undercount.
+cms_latest AS (
+  SELECT series_id, starts AS cms_h123_views
+  FROM `seekho-c084b.analytics_content.content_metrics_run_log_v2`
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY series_id ORDER BY starts DESC, computed_at DESC) = 1
+),
+-- D0 VIEWS ≈ H1. Take the LAST H1 snapshot per series (the largest H1 `starts`,
+-- i.e. the reading just before it rolls into H12) as the D0 view count.
+cms_d0 AS (
+  SELECT series_id, starts AS cms_d0_views
+  FROM `seekho-c084b.analytics_content.content_metrics_run_log_v2`
+  WHERE snapshot_tag = 'H1'
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY series_id ORDER BY starts DESC, computed_at DESC) = 1
+),
 all_series AS (
   SELECT cs.id AS series_id, cs.title AS series_title, cs.show_id, cs.category_id, cs.language,
          DATE(cs.approved_on,'Asia/Kolkata')  AS approved_dt,
@@ -636,8 +653,11 @@ SELECT
   iw.category_id, cat.title AS category_title, iw.language,
   iw.approved_dt, iw.published_dt, iw.duration_s AS video_duration_sec, iw.is_premium,
   iw.ep_num, iw.week_num,
-  iw.d0_unique_viewers AS d0_views, iw.d0_unique_viewers,
-  iw.h123_unique_viewers,
+  -- D0 views = CMS final-H1 `starts` (D0 ≈ H1); fall back to raw-watching only if absent.
+  COALESCE(cms0.cms_d0_views, iw.d0_unique_viewers) AS d0_views,
+  COALESCE(cms0.cms_d0_views, iw.d0_unique_viewers) AS d0_unique_viewers,
+  -- H123 views = CMS latest `starts` (source of truth); fall back to raw-watching only if absent.
+  COALESCE(cms.cms_h123_views, iw.h123_unique_viewers) AS h123_unique_viewers,
   iw.d0_total_watchtime_sec, iw.h123_total_watchtime_sec, iw.d0_avg_watchtime_per_user_sec,
   iw.d0_completion_rate_pct, iw.h123_completion_rate_pct, iw.targ_comp,
   iw.prev_d0_unique_viewers, iw.unique_viewer_delta_pct,
@@ -701,6 +721,8 @@ SELECT
   cdd.category_paid_watchtime_28d, cdd.category_eps_published_28d,
   cdd.category_demand_density_sec_per_ep
 FROM in_window_videos iw
+LEFT JOIN cms_latest                             cms  ON cms.series_id  = iw.series_id
+LEFT JOIN cms_d0                                 cms0 ON cms0.series_id = iw.series_id
 LEFT JOIN `seekho-c084b.seekho.courses_show`     sh  ON sh.id  = iw.show_id
 LEFT JOIN `seekho-c084b.seekho.courses_category` cat ON cat.id = iw.category_id
 LEFT JOIN show_with_remarks       swr ON swr.show_id    = iw.show_id

@@ -9,6 +9,7 @@ import ActionQueueTab from '@/components/tabs/ActionQueueTab';
 import DeepDiveTab from '@/components/tabs/DeepDiveTab';
 import GuidelineTab from '@/components/tabs/GuidelineTab';
 import StaleBanner from '@/components/Banners';
+import Logo from '@/components/Logo';
 
 function EmptyState() {
   const setTab = useStore((s) => s.setTab);
@@ -47,7 +48,7 @@ export default function Page() {
     <>
       <header className="bg-white border-b border-slate-200 sticky top-0 z-40">
         <div className="max-w-[1320px] mx-auto px-5 py-3 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-slate-900 text-white flex items-center justify-center font-bold">S</div>
+          <Logo />
           <div>
             <div className="font-semibold leading-tight">Seekho Show Intelligence</div>
             <div className="text-xs text-slate-500 leading-tight">Lifecycle verdict × fatigue diagnosis — reconciled into one call per show.</div>

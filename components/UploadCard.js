@@ -1,14 +1,15 @@
 'use client';
 import { useRef, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { UPLOAD_META, EVAL_REQUIRED, FAT_REQUIRED, HDC_REQUIRED, FAT_EITHER } from '@/lib/constants';
+import { UPLOAD_META, EVAL_REQUIRED, FAT_REQUIRED, HDC_REQUIRED, FAT_EITHER, SNAP_REQUIRED, SNAP_EITHER } from '@/lib/constants';
 import { parseCSV } from '@/lib/csv';
 import { fmtNum, timeAgo, toast } from '@/lib/format';
 import evalSql from '@/sql/evaluation.sql';
 import fatigueSql from '@/sql/fatigue.sql';
 import hdcSql from '@/sql/hdc.sql';
+import snapshotSql from '@/sql/snapshot.sql';
 
-const SQL = { 'eval-sql': evalSql, 'fatigue-sql': fatigueSql, 'hdc-sql': hdcSql };
+const SQL = { 'eval-sql': evalSql, 'fatigue-sql': fatigueSql, 'hdc-sql': hdcSql, 'snapshot-sql': snapshotSql };
 const REDASH = 'https://analytics.seekho.in/queries/new';
 
 export default function UploadCard({ which }) {
@@ -20,9 +21,9 @@ export default function UploadCard({ which }) {
   const inputRef = useRef(null);
 
   const sqlText = (SQL[cfg.sqlId] || '').trim();
-  const required = which === 'eval' ? EVAL_REQUIRED : which === 'hdc' ? HDC_REQUIRED : FAT_REQUIRED;
-  const either = which === 'fatigue' ? FAT_EITHER : [];
-  const labelName = which === 'eval' ? 'Evaluation' : which === 'hdc' ? 'HDC' : 'Fatigue';
+  const required = which === 'eval' ? EVAL_REQUIRED : which === 'hdc' ? HDC_REQUIRED : which === 'snapshot' ? SNAP_REQUIRED : FAT_REQUIRED;
+  const either = which === 'fatigue' ? FAT_EITHER : which === 'snapshot' ? SNAP_EITHER : [];
+  const labelName = which === 'eval' ? 'Evaluation' : which === 'hdc' ? 'HDC' : which === 'snapshot' ? 'H123 views' : 'Fatigue';
 
   function handleFile(file) {
     if (!file) return;
