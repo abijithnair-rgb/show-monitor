@@ -3,6 +3,7 @@ import { useStore } from '@/store/useStore';
 import { buildModel } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
 import CombinedUploadCard from '@/components/CombinedUploadCard';
+import RcaUploadCard from '@/components/RcaUploadCard';
 
 export default function DataTab() {
   const evalRows = useStore((s) => s.evalRows);
@@ -56,6 +57,9 @@ export default function DataTab() {
       {joinNote}
       {hdcNote}
       <CombinedUploadCard />
+      <div className="mt-4">
+        <RcaUploadCard />
+      </div>
       <div className="flex gap-2 mt-4">
         <button className="btn btn-secondary" onClick={loadSample}>Try with sample data</button>
         {hasData && (

@@ -4,6 +4,7 @@ import { useStore } from '@/store/useStore';
 import Nav from '@/components/Nav';
 import Tooltip from '@/components/Tooltip';
 import DataTab from '@/components/tabs/DataTab';
+import RcaTab from '@/components/tabs/RcaTab';
 import ExplorerTab from '@/components/tabs/ExplorerTab';
 import ActionQueueTab from '@/components/tabs/ActionQueueTab';
 import DeepDiveTab from '@/components/tabs/DeepDiveTab';
@@ -36,9 +37,10 @@ export default function Page() {
   let content = null;
   if (!hydrated) {
     content = <div className="text-sm text-slate-400 mt-10 text-center">Loading…</div>;
-  } else if (tab !== 'data' && tab !== 'guide' && !hasData) {
+  } else if (tab !== 'data' && tab !== 'guide' && tab !== 'rca' && !hasData) {
     content = <EmptyState />;
   } else if (tab === 'data') content = <DataTab />;
+  else if (tab === 'rca') content = <RcaTab />;
   else if (tab === 'explorer') content = (<><StaleBanner /><ExplorerTab /></>);
   else if (tab === 'queue') content = (<><StaleBanner /><ActionQueueTab /></>);
   else if (tab === 'deep') content = (<><StaleBanner /><DeepDiveTab /></>);
