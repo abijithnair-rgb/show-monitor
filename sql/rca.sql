@@ -381,8 +381,11 @@ unified AS (
     a.dau, a.dau_dod, a.dau_sdlw, a.dau_7davg, a.dau_dod_pct, a.dau_sdlw_pct, a.dau_7davg_pct,
     a.mins_per_dau, a.mins_per_dau_dod,
     a.dau_organic, a.dau_push, a.dau_moe, a.dau_whatsapp,
+    a.dau_organic_dod, a.dau_push_dod, a.dau_moe_dod, a.dau_whatsapp_dod,
     a.dau_new, a.dau_retained, a.dau_resurrected,
+    a.dau_new_dod, a.dau_retained_dod, a.dau_resurrected_dod,
     a.dau_d0, a.dau_d1_d3, a.dau_d4_d7, a.dau_d8_d14, a.dau_d15_d30, a.dau_d30_plus,
+    a.dau_d0_dod, a.dau_d1_d3_dod, a.dau_d4_d7_dod, a.dau_d8_d14_dod, a.dau_d15_d30_dod, a.dau_d30_plus_dod,
     a.src_drop_driver, a.usertype_drop_driver, a.cohort_drop_driver, a.top_surface_drops, a.peak_drop_hour,
 
     c.series_launched, c.series_success, c.series_fail, c.series_tracking,

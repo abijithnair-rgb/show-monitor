@@ -96,10 +96,40 @@ function rcaFindings(r) {
 
   // --- Paid DAU ---
   const dv = String(r.dau_verdict || '').toUpperCase();
-  if (dv === 'REAL_DROP') {
-    out.push({ tone: 'bad', text: `Paid DAU real drop (${dauPct}% vs 7dAvg, down on all 3 baselines).${r.src_drop_driver ? ` Source: ${String(r.src_drop_driver).trim()}.` : ''}${r.cohort_drop_driver ? ` Cohort: ${String(r.cohort_drop_driver).trim()}.` : ''}` });
-  } else if (dv === 'SOFT_DROP') {
-    out.push({ tone: 'warn', text: `Paid DAU soft dip (${dauPct}% vs 7dAvg) — not confirmed on DoD/SDLW, likely weekday noise.` });
+  // biggest DoD drop within a dimension → tells you exactly where the movement came from
+  const biggestDrop = (defs) => {
+    let best = null;
+    defs.forEach(([label, cur, dod]) => {
+      const c = n(cur), d = n(dod);
+      if (c == null || d == null) return;
+      const delta = c - d;          // negative = lost users
+      if (delta < 0 && (!best || delta < best.delta)) best = { label, delta, cur: c, dod: d };
+    });
+    return best;
+  };
+  const srcDrop = biggestDrop([
+    ['organic', r.dau_organic, r.dau_organic_dod], ['push', r.dau_push, r.dau_push_dod],
+    ['MoEngage', r.dau_moe, r.dau_moe_dod], ['WhatsApp', r.dau_whatsapp, r.dau_whatsapp_dod],
+  ]);
+  const cohortDrop = biggestDrop([
+    ['D0', r.dau_d0, r.dau_d0_dod], ['D1-D3', r.dau_d1_d3, r.dau_d1_d3_dod], ['D4-D7', r.dau_d4_d7, r.dau_d4_d7_dod],
+    ['D8-D14', r.dau_d8_d14, r.dau_d8_d14_dod], ['D15-D30', r.dau_d15_d30, r.dau_d15_d30_dod], ['D30+', r.dau_d30_plus, r.dau_d30_plus_dod],
+  ]);
+  const utDrop = biggestDrop([
+    ['new', r.dau_new, r.dau_new_dod], ['retained', r.dau_retained, r.dau_retained_dod], ['resurrected', r.dau_resurrected, r.dau_resurrected_dod],
+  ]);
+
+  if (dv === 'REAL_DROP' || dv === 'SOFT_DROP') {
+    const tone = dv === 'REAL_DROP' ? 'bad' : 'warn';
+    const head = dv === 'REAL_DROP'
+      ? `Paid DAU real drop (${dauPct}% vs 7dAvg, down on all 3 baselines).`
+      : `Paid DAU soft dip (${dauPct}% vs 7dAvg) — not confirmed on DoD/SDLW, likely weekday noise.`;
+    out.push({ tone, text: head });
+    if (srcDrop) out.push({ tone, text: `Source where it dropped: ${srcDrop.label} fell ${fmtNum(Math.abs(srcDrop.delta))} DoD (${fmtNum(srcDrop.dod)}→${fmtNum(srcDrop.cur)}).` });
+    if (cohortDrop) out.push({ tone, text: `Cohort driving it: ${cohortDrop.label}-since-payment lost ${fmtNum(Math.abs(cohortDrop.delta))} DoD (${fmtNum(cohortDrop.dod)}→${fmtNum(cohortDrop.cur)}) — points to that acquired set, not the whole base.` });
+    if (utDrop) out.push({ tone, text: `User type: ${utDrop.label} users fell ${fmtNum(Math.abs(utDrop.delta))} DoD${utDrop.label === 'new' ? ' — irregular new-acquisition softness' : ''}.` });
+    if (r.top_surface_drops) out.push({ tone: 'info', text: `Surfaces with the biggest fall: ${String(r.top_surface_drops).trim()}.` });
+    if (r.peak_drop_hour) out.push({ tone: 'info', text: `Worst hour vs 7dAvg: ${String(r.peak_drop_hour).trim()}.` });
   } else if (dv === 'REAL_RISE') {
     out.push({ tone: 'good', text: `Paid DAU real rise (+${dauPct}% vs 7dAvg).` });
   }
@@ -116,6 +146,68 @@ function rcaFindings(r) {
 }
 
 const FINDING_DOT = { bad: '#dc2626', good: '#16a34a', warn: '#d97706', info: '#64748b' };
+
+// One dimension's split as a row of cells: each shows current value + DoD delta.
+function SplitRow({ title, cells }) {
+  const present = cells.filter((c) => num(c.cur) != null);
+  if (!present.length) return null;
+  return (
+    <div className="mb-2">
+      <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1">{title}</div>
+      <div className="flex flex-wrap gap-2">
+        {present.map((c) => {
+          const cur = num(c.cur), dod = num(c.dod);
+          const delta = cur != null && dod != null ? cur - dod : null;
+          const color = delta == null || delta === 0 ? '#64748b' : delta < 0 ? '#dc2626' : '#16a34a';
+          return (
+            <div key={c.label} className="border border-slate-200 rounded-lg px-2.5 py-1.5 bg-slate-50/60 min-w-[92px]">
+              <div className="text-[11px] text-slate-500">{c.label}</div>
+              <div className="text-sm font-semibold text-slate-800">{fmtNum(cur)}</div>
+              {delta != null && (
+                <div className="text-[11px]" style={{ color }}>{delta > 0 ? '+' : ''}{fmtNum(delta)} DoD</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DauDrillDown({ r }) {
+  const has = num(r.dau_organic) != null || num(r.dau_new) != null || num(r.dau_d0) != null;
+  if (!has) return null;
+  return (
+    <div className="mb-3 border-t border-slate-100 pt-3">
+      <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Paid DAU drill-down (vs prior day)</div>
+      <SplitRow title="By source" cells={[
+        { label: 'Organic', cur: r.dau_organic, dod: r.dau_organic_dod },
+        { label: 'Push', cur: r.dau_push, dod: r.dau_push_dod },
+        { label: 'MoEngage', cur: r.dau_moe, dod: r.dau_moe_dod },
+        { label: 'WhatsApp', cur: r.dau_whatsapp, dod: r.dau_whatsapp_dod },
+      ]} />
+      <SplitRow title="By user type" cells={[
+        { label: 'New', cur: r.dau_new, dod: r.dau_new_dod },
+        { label: 'Retained', cur: r.dau_retained, dod: r.dau_retained_dod },
+        { label: 'Resurrected', cur: r.dau_resurrected, dod: r.dau_resurrected_dod },
+      ]} />
+      <SplitRow title="By cohort (days since payment)" cells={[
+        { label: 'D0', cur: r.dau_d0, dod: r.dau_d0_dod },
+        { label: 'D1-D3', cur: r.dau_d1_d3, dod: r.dau_d1_d3_dod },
+        { label: 'D4-D7', cur: r.dau_d4_d7, dod: r.dau_d4_d7_dod },
+        { label: 'D8-D14', cur: r.dau_d8_d14, dod: r.dau_d8_d14_dod },
+        { label: 'D15-D30', cur: r.dau_d15_d30, dod: r.dau_d15_d30_dod },
+        { label: 'D30+', cur: r.dau_d30_plus, dod: r.dau_d30_plus_dod },
+      ]} />
+      {(r.top_surface_drops || r.peak_drop_hour) && (
+        <div className="text-xs text-slate-500 mt-1 space-y-0.5">
+          {r.top_surface_drops && <div><b>Surfaces down most:</b> {String(r.top_surface_drops).trim()}</div>}
+          {r.peak_drop_hour && <div><b>Worst hour:</b> {String(r.peak_drop_hour).trim()}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function Metric({ label, big, sub, tone }) {
   return (
@@ -212,6 +304,8 @@ function RcaCard({ r }) {
           sub={<>{crD2N != null ? `${crD2N} videos · ` : ''}live 24h gate, not frozen</>}
         />
       </div>
+
+      <DauDrillDown r={r} />
 
       {r.auto_rca && (
         <div className="text-sm text-slate-600 border-t border-slate-100 pt-2 whitespace-pre-wrap">{r.auto_rca}</div>
