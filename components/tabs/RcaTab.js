@@ -77,12 +77,15 @@ function rcaFindings(r) {
     }
   }
 
-  // --- Success rate ---
-  if (sr != null && sr7 != null) {
-    const d = Math.round((sr - sr7) * 10) / 10;
-    if (d <= -10) out.push({ tone: 'bad', text: `Success rate fell to ${sr}% vs 7-day avg ${sr7}% (${d}pp) — settled cohort D-10→D-4 underperforming on completion.` });
-    else if (d >= 10) out.push({ tone: 'good', text: `Success rate strong at ${sr}% vs 7-day avg ${sr7}% (+${d}pp).` });
+  // --- Success rate (D-10→D-4 settled cohort) ---
+  if (sr != null) {
+    if (sr < 50) out.push({ tone: 'bad', text: `Success rate ${sr}% over the settled D-10→D-4 cohort — under half of launches are clearing their completion target.` });
+    else if (sr >= 75) out.push({ tone: 'good', text: `Success rate strong at ${sr}% over the settled D-10→D-4 cohort.` });
   }
+  // D-4 (latest settled) vs D-2 (HDC day, live) completion-rate read
+  const cr4 = n(r.cr_d4), cr4t = n(r.cr_d4_targ), cr2 = n(r.cr_d2), cr2t = n(r.cr_d2_targ);
+  if (cr4 != null && cr4t != null && cr4 < cr4t) out.push({ tone: 'warn', text: `D-4 completion ${cr4}% is below target ${cr4t}% — newest settled day’s content is under-completing.` });
+  if (cr2 != null && cr2t != null && cr2 < cr2t) out.push({ tone: 'info', text: `D-2 (HDC day) completion ${cr2}% vs target ${cr2t}% — live/un-frozen, early read only.` });
 
   // --- Paid DAU ---
   const dv = String(r.dau_verdict || '').toUpperCase();
@@ -128,6 +131,8 @@ function RcaCard({ r }) {
   const sr = num(r.sr_pct);
   const sr7 = num(r.sr_7davg);
   const srDelta = sr != null && sr7 != null ? Math.round((sr - sr7) * 10) / 10 : null;
+  const crD4 = num(r.cr_d4), crD4Targ = num(r.cr_d4_targ);
+  const crD2 = num(r.cr_d2), crD2Targ = num(r.cr_d2_targ);
 
   const hdcTone = /_DROP$/.test(String(r.hdc_verdict).toUpperCase()) ? '#dc2626'
     : /_RISE$/.test(String(r.hdc_verdict).toUpperCase()) ? '#16a34a' : '#0f172a';
@@ -190,14 +195,14 @@ function RcaCard({ r }) {
           sub={<>vs7dAvg <Delta value={num(r.dau_7davg_pct)} suffix="%" /> · {String(r.dau_verdict || '').replace(/_/g, ' ').toLowerCase()}</>}
         />
         <Metric
-          label="Success rate (D-10→D-4)"
+          label="Success rate (D-10→D-4 avg)"
           big={sr != null ? `${sr}%` : '—'}
-          sub={<>7dAvg {sr7 != null ? `${sr7}%` : '—'} · <Delta value={srDelta} suffix="pp" /></>}
+          sub={<>D-4 completion {crD4 != null ? `${crD4}%` : '—'}{crD4Targ != null ? ` / target ${crD4Targ}%` : ''}</>}
         />
         <Metric
-          label="Correlation HDC↔DAU"
-          big={num(r.corr_hdc_dau) != null ? num(r.corr_hdc_dau) : '—'}
-          sub={<>SR↔DAU {num(r.corr_sr_dau) ?? '—'} · HDC↔SR {num(r.corr_hdc_sr) ?? '—'}</>}
+          label="Completion rate (D-2, HDC day)"
+          big={crD2 != null ? `${crD2}%` : '—'}
+          sub={<>{crD2Targ != null ? `target ${crD2Targ}% · ` : ''}live, not yet frozen</>}
         />
       </div>
 

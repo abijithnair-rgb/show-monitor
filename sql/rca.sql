@@ -180,14 +180,55 @@ content_daily AS (
     ROUND(SUM(watch_hrs),1) AS content_watch_hrs, SUM(starts) AS content_starts, SUM(completes) AS content_completes
   FROM seg_cp GROUP BY 1,2,3
 ),
+-- SUCCESS RATE is a POOLED cohort, not a single launch day: for each report_date it
+-- pools every series published in [report_date-10, report_date-4] — 7 fully-settled
+-- days (each ≥4 days old, past the 72h freeze). Matches the canonical SR query
+-- (status=1 success / status=0 fail / NULL tracking excluded). Baseline = the prior
+-- 7-day cohort [report_date-17, report_date-11].
+sr_spine AS (
+  SELECT DISTINCT level, segment, date_ AS report_date FROM dau_daily
+),
+sr_cur AS (
+  SELECT sp.level, sp.segment, sp.report_date,
+    SUM(cc.series_launched)  AS series_launched,
+    SUM(cc.series_success)   AS series_success,
+    SUM(cc.series_fail)      AS series_fail,
+    SUM(cc.series_tracking)  AS series_tracking,
+    ROUND(AVG(cc.avg_cr),1)       AS avg_cr,
+    ROUND(AVG(cc.avg_targ_cr),1)  AS avg_targ_cr,
+    ROUND(SUM(cc.content_watch_hrs),1) AS content_watch_hrs
+  FROM sr_spine sp
+  LEFT JOIN content_daily cc ON cc.level=sp.level AND cc.segment=sp.segment
+    AND cc.date_ BETWEEN DATE_SUB(sp.report_date, INTERVAL 10 DAY) AND DATE_SUB(sp.report_date, INTERVAL 4 DAY)
+  GROUP BY 1,2,3
+),
+sr_prev AS (
+  SELECT sp.level, sp.segment, sp.report_date,
+    SUM(cc.series_success) AS series_success, SUM(cc.series_fail) AS series_fail
+  FROM sr_spine sp
+  LEFT JOIN content_daily cc ON cc.level=sp.level AND cc.segment=sp.segment
+    AND cc.date_ BETWEEN DATE_SUB(sp.report_date, INTERVAL 17 DAY) AND DATE_SUB(sp.report_date, INTERVAL 11 DAY)
+  GROUP BY 1,2,3
+),
 content_final AS (
-  SELECT c.*, (c.date_<=DATE_SUB(end_date,INTERVAL sr_freeze_days DAY)) AS sr_is_frozen,
-    dod.sr_pct AS sr_dod, sdlw.sr_pct AS sr_sdlw,
-    ROUND(AVG(c.sr_pct) OVER (PARTITION BY c.level,c.segment ORDER BY c.date_ ROWS BETWEEN 7 PRECEDING AND 1 PRECEDING),1) AS sr_7davg,
-    dod.content_watch_hrs AS cwh_dod, sdlw.content_watch_hrs AS cwh_sdlw
-  FROM content_daily c
-  LEFT JOIN content_daily dod ON dod.level=c.level AND dod.segment=c.segment AND dod.date_=DATE_SUB(c.date_,INTERVAL 1 DAY)
-  LEFT JOIN content_daily sdlw ON sdlw.level=c.level AND sdlw.segment=c.segment AND sdlw.date_=DATE_SUB(c.date_,INTERVAL 7 DAY)
+  SELECT cur.level, cur.segment, cur.report_date AS date_,
+    cur.series_launched, cur.series_success, cur.series_fail, cur.series_tracking,
+    ROUND(100*SAFE_DIVIDE(cur.series_success, NULLIF(cur.series_success+cur.series_fail,0)),1) AS sr_pct,
+    CAST(NULL AS FLOAT64) AS sr_dod,
+    ROUND(100*SAFE_DIVIDE(prv.series_success, NULLIF(prv.series_success+prv.series_fail,0)),1) AS sr_sdlw,
+    ROUND(100*SAFE_DIVIDE(prv.series_success, NULLIF(prv.series_success+prv.series_fail,0)),1) AS sr_7davg,
+    TRUE AS sr_is_frozen,   -- cohort window (D-10..D-4) is always past the 72h freeze
+    cur.avg_cr, cur.avg_targ_cr,
+    -- Completion rate of D-4 (the latest, fully-settled day in the SR cohort).
+    d4.avg_cr AS cr_d4, d4.avg_targ_cr AS cr_d4_targ,
+    -- Completion rate of D-2 (the day HDC is calculated). NOT frozen — current reading
+    -- for reference only (its 72h CR verdict is still tracking).
+    d2.avg_cr AS cr_d2, d2.avg_targ_cr AS cr_d2_targ,
+    cur.content_watch_hrs, CAST(NULL AS FLOAT64) AS cwh_dod, CAST(NULL AS FLOAT64) AS cwh_sdlw
+  FROM sr_cur cur
+  LEFT JOIN sr_prev prv ON prv.level=cur.level AND prv.segment=cur.segment AND prv.report_date=cur.report_date
+  LEFT JOIN content_daily d4 ON d4.level=cur.level AND d4.segment=cur.segment AND d4.date_=DATE_SUB(cur.report_date, INTERVAL 4 DAY)
+  LEFT JOIN content_daily d2 ON d2.level=cur.level AND d2.segment=cur.segment AND d2.date_=DATE_SUB(cur.report_date, INTERVAL 2 DAY)
 ),
 
 -- ===========================================================================
@@ -320,6 +361,7 @@ unified AS (
 
     c.series_launched, c.series_success, c.series_fail, c.series_tracking,
     c.sr_pct, c.sr_dod, c.sr_sdlw, c.sr_7davg, c.sr_is_frozen, c.avg_cr, c.avg_targ_cr,
+    c.cr_d4, c.cr_d4_targ, c.cr_d2, c.cr_d2_targ,
     c.content_watch_hrs, c.cwh_dod, c.cwh_sdlw,
 
     h.hdc_eligible AS hdc_supply, h.supply_dod, h.supply_7davg,
