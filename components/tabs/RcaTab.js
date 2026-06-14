@@ -121,17 +121,39 @@ function rcaFindings(r) {
 
   if (dv === 'REAL_DROP' || dv === 'SOFT_DROP') {
     const tone = dv === 'REAL_DROP' ? 'bad' : 'warn';
+    const totalDrop = n(r.dau) != null && n(r.dau_dod) != null ? n(r.dau_dod) - n(r.dau) : null; // +ve = users lost DoD
+    const share = (x) => (totalDrop && totalDrop > 0 ? ` (${Math.round((Math.abs(x) / totalDrop) * 100)}% of the fall)` : '');
     const head = dv === 'REAL_DROP'
-      ? `Paid DAU real drop (${dauPct}% vs 7dAvg, down on all 3 baselines).`
-      : `Paid DAU soft dip (${dauPct}% vs 7dAvg) — not confirmed on DoD/SDLW, likely weekday noise.`;
+      ? `Paid DAU fell ${dauPct}% vs 7dAvg${totalDrop ? `, ${fmtNum(totalDrop)} fewer users than yesterday` : ''} (down on all 3 baselines — a real drop, not noise).`
+      : `Paid DAU dipped ${dauPct}% vs 7dAvg but held on DoD/SDLW — likely weekday noise, watch don't act.`;
     out.push({ tone, text: head });
-    if (srcDrop) out.push({ tone, text: `Source where it dropped: ${srcDrop.label} fell ${fmtNum(Math.abs(srcDrop.delta))} DoD (${fmtNum(srcDrop.dod)}→${fmtNum(srcDrop.cur)}).` });
-    if (cohortDrop) out.push({ tone, text: `Cohort driving it: ${cohortDrop.label}-since-payment lost ${fmtNum(Math.abs(cohortDrop.delta))} DoD (${fmtNum(cohortDrop.dod)}→${fmtNum(cohortDrop.cur)}) — points to that acquired set, not the whole base.` });
-    if (utDrop) out.push({ tone, text: `User type: ${utDrop.label} users fell ${fmtNum(Math.abs(utDrop.delta))} DoD${utDrop.label === 'new' ? ' — irregular new-acquisition softness' : ''}.` });
-    if (r.top_surface_drops) out.push({ tone: 'info', text: `Surfaces with the biggest fall: ${String(r.top_surface_drops).trim()}.` });
-    if (r.peak_drop_hour) out.push({ tone: 'info', text: `Worst hour vs 7dAvg: ${String(r.peak_drop_hour).trim()}.` });
+
+    // Source — names the channel, so you know if it's a distribution/notification problem vs organic.
+    if (srcDrop) {
+      const why = srcDrop.label === 'push' || srcDrop.label === 'MoEngage'
+        ? ' — a notification-delivery gap (check if a campaign didn’t fire), not lost interest'
+        : srcDrop.label === 'organic' ? ' — fewer users coming back on their own, the worrying kind' : '';
+      out.push({ tone, text: `It came from ${srcDrop.label}: ${fmtNum(srcDrop.dod)}→${fmtNum(srcDrop.cur)}, ${fmtNum(Math.abs(srcDrop.delta))} fewer${share(srcDrop.delta)}${why}.` });
+    }
+    // Cohort — recently-acquired vs tenured tells you whether a specific intake is leaking.
+    if (cohortDrop) {
+      const recent = ['D0', 'D1-D3', 'D4-D7'].includes(cohortDrop.label);
+      const why = recent
+        ? ` — a freshly-acquired set churning early; if a recent acquisition push brought low-intent users, this is where it shows`
+        : ` — older/tenured users, so it's habit/engagement, not a bad recent intake`;
+      out.push({ tone, text: `Concentrated in the ${cohortDrop.label} post-payment cohort: ${fmtNum(cohortDrop.dod)}→${fmtNum(cohortDrop.cur)}, ${fmtNum(Math.abs(cohortDrop.delta))} fewer${share(cohortDrop.delta)}${why}.` });
+    }
+    // User type — new vs retained: is acquisition or retention the lever?
+    if (utDrop && utDrop.label === 'new') {
+      out.push({ tone, text: `New-user activity dropped ${fmtNum(Math.abs(utDrop.delta))}${share(utDrop.delta)} — an acquisition/top-of-funnel issue (fewer first-day actives), separate from retention.` });
+    } else if (utDrop && utDrop.label === 'retained') {
+      out.push({ tone, text: `Retained users dropped ${fmtNum(Math.abs(utDrop.delta))}${share(utDrop.delta)} — existing payers came back less, a retention/content-freshness signal.` });
+    }
+    // Surface + hour — gives the team a concrete place/time to inspect.
+    if (r.top_surface_drops) out.push({ tone: 'info', text: `Where on the app: ${String(r.top_surface_drops).trim()} saw the biggest surface drops — start the check there.` });
+    if (r.peak_drop_hour) out.push({ tone: 'info', text: `When: ${String(r.peak_drop_hour).trim()} was the worst hour vs 7dAvg.` });
   } else if (dv === 'REAL_RISE') {
-    out.push({ tone: 'good', text: `Paid DAU real rise (+${dauPct}% vs 7dAvg).` });
+    out.push({ tone: 'good', text: `Paid DAU rose ${dauPct}% vs 7dAvg on all 3 baselines — a real lift.` });
   }
 
   // --- Co-movement (the joint story) ---
@@ -146,68 +168,6 @@ function rcaFindings(r) {
 }
 
 const FINDING_DOT = { bad: '#dc2626', good: '#16a34a', warn: '#d97706', info: '#64748b' };
-
-// One dimension's split as a row of cells: each shows current value + DoD delta.
-function SplitRow({ title, cells }) {
-  const present = cells.filter((c) => num(c.cur) != null);
-  if (!present.length) return null;
-  return (
-    <div className="mb-2">
-      <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1">{title}</div>
-      <div className="flex flex-wrap gap-2">
-        {present.map((c) => {
-          const cur = num(c.cur), dod = num(c.dod);
-          const delta = cur != null && dod != null ? cur - dod : null;
-          const color = delta == null || delta === 0 ? '#64748b' : delta < 0 ? '#dc2626' : '#16a34a';
-          return (
-            <div key={c.label} className="border border-slate-200 rounded-lg px-2.5 py-1.5 bg-slate-50/60 min-w-[92px]">
-              <div className="text-[11px] text-slate-500">{c.label}</div>
-              <div className="text-sm font-semibold text-slate-800">{fmtNum(cur)}</div>
-              {delta != null && (
-                <div className="text-[11px]" style={{ color }}>{delta > 0 ? '+' : ''}{fmtNum(delta)} DoD</div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function DauDrillDown({ r }) {
-  const has = num(r.dau_organic) != null || num(r.dau_new) != null || num(r.dau_d0) != null;
-  if (!has) return null;
-  return (
-    <div className="mb-3 border-t border-slate-100 pt-3">
-      <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Paid DAU drill-down (vs prior day)</div>
-      <SplitRow title="By source" cells={[
-        { label: 'Organic', cur: r.dau_organic, dod: r.dau_organic_dod },
-        { label: 'Push', cur: r.dau_push, dod: r.dau_push_dod },
-        { label: 'MoEngage', cur: r.dau_moe, dod: r.dau_moe_dod },
-        { label: 'WhatsApp', cur: r.dau_whatsapp, dod: r.dau_whatsapp_dod },
-      ]} />
-      <SplitRow title="By user type" cells={[
-        { label: 'New', cur: r.dau_new, dod: r.dau_new_dod },
-        { label: 'Retained', cur: r.dau_retained, dod: r.dau_retained_dod },
-        { label: 'Resurrected', cur: r.dau_resurrected, dod: r.dau_resurrected_dod },
-      ]} />
-      <SplitRow title="By cohort (days since payment)" cells={[
-        { label: 'D0', cur: r.dau_d0, dod: r.dau_d0_dod },
-        { label: 'D1-D3', cur: r.dau_d1_d3, dod: r.dau_d1_d3_dod },
-        { label: 'D4-D7', cur: r.dau_d4_d7, dod: r.dau_d4_d7_dod },
-        { label: 'D8-D14', cur: r.dau_d8_d14, dod: r.dau_d8_d14_dod },
-        { label: 'D15-D30', cur: r.dau_d15_d30, dod: r.dau_d15_d30_dod },
-        { label: 'D30+', cur: r.dau_d30_plus, dod: r.dau_d30_plus_dod },
-      ]} />
-      {(r.top_surface_drops || r.peak_drop_hour) && (
-        <div className="text-xs text-slate-500 mt-1 space-y-0.5">
-          {r.top_surface_drops && <div><b>Surfaces down most:</b> {String(r.top_surface_drops).trim()}</div>}
-          {r.peak_drop_hour && <div><b>Worst hour:</b> {String(r.peak_drop_hour).trim()}</div>}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function Metric({ label, big, sub, tone }) {
   return (
@@ -304,8 +264,6 @@ function RcaCard({ r }) {
           sub={<>{crD2N != null ? `${crD2N} videos · ` : ''}live 24h gate, not frozen</>}
         />
       </div>
-
-      <DauDrillDown r={r} />
 
       {r.auto_rca && (
         <div className="text-sm text-slate-600 border-t border-slate-100 pt-2 whitespace-pre-wrap">{r.auto_rca}</div>
