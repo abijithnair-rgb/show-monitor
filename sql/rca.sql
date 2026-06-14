@@ -228,15 +228,25 @@ content_final AS (
 -- BLOCK C — HDC DUAL-GATE (all-user 24h view gate  +  frozen CR gate)
 -- ===========================================================================
 hdc_series AS (
+  -- Eligibility mirrors the HDC report exactly: series state live/expired, has a
+  -- duration & approved_on, AND the creator is quality-approved. (No active-show
+  -- filter — the HDC report does not restrict on show_type/state.)
   SELECT cs.id AS series_id, cs.language, COALESCE(bu.bu_name,'Other') AS bu_name,
          cs.duration_s,
          TIMESTAMP(cs.approved_on) AS approved_ts, DATE(cs.approved_on,'Asia/Kolkata') AS date_
   FROM seekho.courses_series cs
-  JOIN seekho.courses_show csh ON csh.id=cs.show_id AND csh.show_type='active' AND csh.state='live'
+  JOIN seekho.users_creatorinfo ci ON cs.creator_id = ci.profile_id
+  JOIN seekho.users_userprofile up ON ci.profile_id = up.user_ptr_id AND up.is_quality_approved = TRUE
   LEFT JOIN bu_mapping bu ON cs.category_id=bu.category_id
   WHERE DATE(cs.approved_on,'Asia/Kolkata') BETWEEN start_date AND end_date
     AND cs.language IN ('hi','ta','te','ml','kn') AND cs.state IN ('live','expired')
     AND cs.duration_s>0 AND cs.approved_on IS NOT NULL
+),
+-- Dates already settled in video_play — used so intraday only fills the unsettled tail.
+hdc_settled_dates AS (
+  SELECT DISTINCT DATE(`timestamp`,'Asia/Kolkata') AS settled_date
+  FROM content_recommendation.video_play
+  WHERE DATE(`timestamp`,'Asia/Kolkata') BETWEEN start_date AND DATE_ADD(end_date, INTERVAL 1 DAY)
 ),
 hdc_plays AS (
   SELECT CAST(series_id AS INT64) AS series_id, firebase_uid AS uid, `timestamp` AS ts,
@@ -245,6 +255,15 @@ hdc_plays AS (
   WHERE DATE(`timestamp`,'Asia/Kolkata') BETWEEN start_date AND DATE_ADD(end_date, INTERVAL 1 DAY)
     AND package_name NOT IN ('com.bolo.android','com.seekho.ios','com.seekhoai.android','com.seekhoglobal.ios','com.seekhoglobal.android')
     AND (source_screen NOT IN ('from_notification','sharing','from_moe_notification') OR source_screen IS NULL)
+  UNION ALL
+  -- intraday plays for the latest, not-yet-settled days (avoids double counting)
+  SELECT CAST(series_id AS INT64), firebase_uid, `timestamp`, CAST(MAX(watchtime) AS FLOAT64)
+  FROM content_recommendation.video_play_intraday
+  WHERE DATE(`timestamp`,'Asia/Kolkata') BETWEEN start_date AND DATE_ADD(end_date, INTERVAL 1 DAY)
+    AND DATE(`timestamp`,'Asia/Kolkata') NOT IN (SELECT settled_date FROM hdc_settled_dates)
+    AND package_name NOT IN ('com.bolo.android','com.seekho.ios','com.seekhoai.android','com.seekhoglobal.ios','com.seekhoglobal.android')
+    AND (source_screen NOT IN ('from_notification','sharing','from_moe_notification') OR source_screen IS NULL)
+  GROUP BY `timestamp`, firebase_uid, series_id
 ),
 -- per series × user: total watch seconds inside the first-24h window
 hdc_user_watch AS (
