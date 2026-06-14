@@ -219,16 +219,9 @@ content_final AS (
     ROUND(100*SAFE_DIVIDE(prv.series_success, NULLIF(prv.series_success+prv.series_fail,0)),1) AS sr_7davg,
     TRUE AS sr_is_frozen,   -- cohort window (D-10..D-4) is always past the 72h freeze
     cur.avg_cr, cur.avg_targ_cr,
-    -- Completion rate of D-4 (the latest, fully-settled day in the SR cohort).
-    d4.avg_cr AS cr_d4, d4.avg_targ_cr AS cr_d4_targ,
-    -- Completion rate of D-2 (the day HDC is calculated). NOT frozen — current reading
-    -- for reference only (its 72h CR verdict is still tracking).
-    d2.avg_cr AS cr_d2, d2.avg_targ_cr AS cr_d2_targ,
     cur.content_watch_hrs, CAST(NULL AS FLOAT64) AS cwh_dod, CAST(NULL AS FLOAT64) AS cwh_sdlw
   FROM sr_cur cur
   LEFT JOIN sr_prev prv ON prv.level=cur.level AND prv.segment=cur.segment AND prv.report_date=cur.report_date
-  LEFT JOIN content_daily d4 ON d4.level=cur.level AND d4.segment=cur.segment AND d4.date_=DATE_SUB(cur.report_date, INTERVAL 4 DAY)
-  LEFT JOIN content_daily d2 ON d2.level=cur.level AND d2.segment=cur.segment AND d2.date_=DATE_SUB(cur.report_date, INTERVAL 2 DAY)
 ),
 
 -- ===========================================================================
@@ -293,9 +286,9 @@ hdc_labeled AS (
   FROM hdc_flags f LEFT JOIN hdc_p90 p ON p.date_=f.date_ AND p.language=f.language
 ),
 seg_hdc AS (
-  SELECT 'LANGUAGE' AS level, language AS segment, date_, view_pass, cr_pass_flag, hdc_flag FROM hdc_labeled
-  UNION ALL SELECT 'TOTAL','overall_httmk', date_, view_pass, cr_pass_flag, hdc_flag FROM hdc_labeled
-  UNION ALL SELECT 'BU', bu_name, date_, view_pass, cr_pass_flag, hdc_flag FROM hdc_labeled WHERE language='hi' AND bu_name<>'Other'
+  SELECT 'LANGUAGE' AS level, language AS segment, date_, view_pass, cr_pass_flag, hdc_flag, actual_cr, target_cr FROM hdc_labeled
+  UNION ALL SELECT 'TOTAL','overall_httmk', date_, view_pass, cr_pass_flag, hdc_flag, actual_cr, target_cr FROM hdc_labeled
+  UNION ALL SELECT 'BU', bu_name, date_, view_pass, cr_pass_flag, hdc_flag, actual_cr, target_cr FROM hdc_labeled WHERE language='hi' AND bu_name<>'Other'
 ),
 hdc_daily AS (
   SELECT level, segment, date_,
@@ -307,6 +300,15 @@ hdc_daily AS (
     SUM(CASE WHEN view_pass=1 AND cr_pass_flag=0 THEN 1 ELSE 0 END) AS miss_cr_only,
     SUM(CASE WHEN view_pass=0 AND cr_pass_flag=0 THEN 1 ELSE 0 END) AS miss_both,
     ROUND(100*SAFE_DIVIDE(SUM(hdc_flag),COUNT(*)),1) AS hdc_rate
+  FROM seg_hdc GROUP BY 1,2,3
+),
+-- Live 24h completion rate per segment per day (avg of per-series actual CR vs target).
+-- This is the ONLY source with a value for un-frozen recent days (content_performance.
+-- completion_rate is NULL until the 72h freeze), so D-2 etc. always have a number here.
+hdc_cr_daily AS (
+  SELECT level, segment, date_,
+    ROUND(AVG(actual_cr),1) AS day_cr,
+    ROUND(AVG(target_cr),1) AS day_targ
   FROM seg_hdc GROUP BY 1,2,3
 ),
 hdc_final AS (
@@ -361,7 +363,8 @@ unified AS (
 
     c.series_launched, c.series_success, c.series_fail, c.series_tracking,
     c.sr_pct, c.sr_dod, c.sr_sdlw, c.sr_7davg, c.sr_is_frozen, c.avg_cr, c.avg_targ_cr,
-    c.cr_d4, c.cr_d4_targ, c.cr_d2, c.cr_d2_targ,
+    cr4.day_cr AS cr_d4, cr4.day_targ AS cr_d4_targ,   -- live 24h completion, D-4 (settled)
+    cr2.day_cr AS cr_d2, cr2.day_targ AS cr_d2_targ,   -- live 24h completion, D-2 (HDC day, not frozen)
     c.content_watch_hrs, c.cwh_dod, c.cwh_sdlw,
 
     h.hdc_eligible AS hdc_supply, h.supply_dod, h.supply_7davg,
@@ -462,6 +465,8 @@ unified AS (
   FULL OUTER JOIN hdc_final h
     ON COALESCE(a.level,c.level)=h.level AND COALESCE(a.segment,c.segment)=h.segment AND COALESCE(a.date_,c.date_)=h.date_
   LEFT JOIN corr_block cb ON cb.level=COALESCE(a.level,c.level,h.level) AND cb.segment=COALESCE(a.segment,c.segment,h.segment)
+  LEFT JOIN hdc_cr_daily cr4 ON cr4.level=COALESCE(a.level,c.level,h.level) AND cr4.segment=COALESCE(a.segment,c.segment,h.segment) AND cr4.date_=DATE_SUB(COALESCE(a.date_,c.date_,h.date_), INTERVAL 4 DAY)
+  LEFT JOIN hdc_cr_daily cr2 ON cr2.level=COALESCE(a.level,c.level,h.level) AND cr2.segment=COALESCE(a.segment,c.segment,h.segment) AND cr2.date_=DATE_SUB(COALESCE(a.date_,c.date_,h.date_), INTERVAL 2 DAY)
 )
 
 SELECT *
