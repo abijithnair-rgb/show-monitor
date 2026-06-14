@@ -58,23 +58,27 @@ function rcaFindings(r) {
   const hv = String(r.hdc_verdict || '').toUpperCase();
 
   // --- HDC (the lead) ---
+  const contentMiss = mc + mb;   // CR failures (incl. both) = content problem
+  const viewMiss = mv;           // reach failures = distribution problem
   if (hv === 'HDC_DROP') {
     const pp = hdcRate != null && hdcRate7 != null ? Math.round((hdcRate - hdcRate7) * 10) / 10 : null;
     out.push({ tone: 'bad', text: `HDC dropped: ${hdcCount ?? '—'} hits vs 7-day avg ${hdc7 ?? '—'}${pp != null ? ` (rate ${hdcRate}% vs ${hdcRate7}%, ${pp}pp)` : ''}.` });
-    if (r.hdc_attribution) out.push({ tone: 'bad', text: r.hdc_attribution.replace(/^HDC down /, 'Root cause: ') });
-    else if (supply != null && supply7 != null && supply < supply7 * 0.85) out.push({ tone: 'warn', text: `Fewer launches today (${supply} eligible vs 7dAvg ${supply7}) — part of the HDC drop is supply, not quality.` });
+    // Root cause derived ONCE from the actual miss breakdown (no contradiction).
+    if (supply != null && supply7 != null && supply < supply7 * 0.85) {
+      out.push({ tone: 'warn', text: `Root cause: SUPPLY — fewer launches (${supply} eligible vs 7dAvg ${supply7}).` });
+    } else if (viewMiss > contentMiss && viewMiss > 0) {
+      out.push({ tone: 'bad', text: `Root cause: DISTRIBUTION — mostly view misses (${viewMiss} view-only vs ${contentMiss} CR). Content cleared its target; reach/recommendations are the gap.` });
+    } else if (contentMiss > viewMiss && contentMiss > 0) {
+      out.push({ tone: 'bad', text: `Root cause: CONTENT — mostly CR misses (${mc} cr-only + ${mb} both vs ${viewMiss} view-only) → show managers: hook / pacing / target.` });
+    } else if (viewMiss + contentMiss > 0) {
+      out.push({ tone: 'bad', text: `Root cause: MIXED — ${viewMiss} view-only and ${contentMiss} CR misses in roughly equal measure.` });
+    }
   } else if (hv === 'HDC_RISE') {
     out.push({ tone: 'good', text: `HDC rose: ${hdcCount ?? '—'} hits vs 7-day avg ${hdc7 ?? '—'} (rate ${hdcRate}%).` });
-  }
-
-  // --- Miss routing (where the failure sits) ---
-  const totMiss = mv + mc + mb;
-  if (totMiss > 0 && (hv === 'HDC_DROP' || mc + mb >= mv)) {
-    if (mc + mb >= mv && (mc + mb) > 0) {
-      out.push({ tone: 'bad', text: `Mostly CONTENT misses (${mc} cr-only + ${mb} both vs ${mv} view-only) → route to show managers: hook / pacing / target mismatch.` });
-    } else if (mv > 0) {
-      out.push({ tone: 'warn', text: `Mostly VIEW misses (${mv} view-only) → distribution / recommendations problem, not the content itself.` });
-    }
+  } else if ((viewMiss + contentMiss) > 0) {
+    // Not a flagged drop, but still surface where the misses concentrate.
+    if (viewMiss > contentMiss) out.push({ tone: 'info', text: `Misses lean DISTRIBUTION: ${viewMiss} view-only vs ${contentMiss} CR.` });
+    else if (contentMiss > viewMiss) out.push({ tone: 'info', text: `Misses lean CONTENT: ${contentMiss} CR vs ${viewMiss} view-only.` });
   }
 
   // --- Success rate (D-10→D-4 settled cohort) ---

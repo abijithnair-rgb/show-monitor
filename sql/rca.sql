@@ -422,15 +422,22 @@ unified AS (
       ELSE 'normal'
     END AS hdc_verdict,
 
+    -- Attribution: only call it once HDC actually dropped. Then decide SUPPLY vs the
+    -- dominant miss type — VIEW misses = distribution/reach, CR misses = content quality.
     CASE
       WHEN h.hdc_count IS NULL OR NOT h.hdc_is_settled OR h.hdc_7davg IS NULL THEN NULL
-      WHEN h.hdc_count < h.hdc_7davg - GREATEST(1,0.20*h.hdc_7davg) AND h.hdc_eligible < h.supply_7davg*0.85
+      WHEN NOT (h.hdc_count < h.hdc_7davg - GREATEST(1,0.20*h.hdc_7davg)) THEN NULL
+      WHEN h.hdc_eligible < h.supply_7davg*0.85
         THEN 'HDC down mainly SUPPLY (fewer launches)'
-      WHEN h.hdc_count < h.hdc_7davg - GREATEST(1,0.20*h.hdc_7davg) AND h.hdc_rate < h.hdc_rate_7davg-5
+      -- hit-rate fell AND the misses are mostly content (CR) failures
+      WHEN h.hdc_rate < h.hdc_rate_7davg-5 AND (h.miss_cr_only + h.miss_both) > h.miss_view_only
+        THEN 'HDC down mainly CONTENT (CR misses — hook/pacing/target)'
+      -- hit-rate fell but the misses are mostly reach (view) failures
+      WHEN h.hdc_rate < h.hdc_rate_7davg-5 AND h.miss_view_only >= (h.miss_cr_only + h.miss_both)
+        THEN 'HDC down mainly DISTRIBUTION (view misses — reach/recommendations)'
+      WHEN h.hdc_rate < h.hdc_rate_7davg-5
         THEN 'HDC down mainly QUALITY (hit-rate fell)'
-      WHEN h.hdc_count < h.hdc_7davg - GREATEST(1,0.20*h.hdc_7davg)
-        THEN 'HDC down (supply+quality mixed)'
-      ELSE NULL
+      ELSE 'HDC down (supply+quality mixed)'
     END AS hdc_attribution,
 
     CASE
