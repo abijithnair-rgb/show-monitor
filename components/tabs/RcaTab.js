@@ -208,14 +208,24 @@ function RcaCard({ r }) {
   );
 }
 
+const isSettled = (v) => v === true || String(v).toLowerCase() === 'true';
+
 export default function RcaTab() {
   const rcaRows = useStore((s) => s.rcaRows);
   const dates = useMemo(
     () => [...new Set((rcaRows || []).map((r) => r.report_date).filter(Boolean))].sort().reverse(),
     [rcaRows]
   );
+  // A date's HDC is settled once its CR gate has frozen (~72h). The newest 1–3 days
+  // are still settling, so HDC reads ~0 there — default to the latest SETTLED date.
+  const settledDates = useMemo(() => {
+    const ok = new Set();
+    (rcaRows || []).forEach((r) => { if (isSettled(r.hdc_is_settled)) ok.add(r.report_date); });
+    return ok;
+  }, [rcaRows]);
   const [date, setDate] = useState('');
-  const activeDate = date || dates[0] || '';
+  const defaultDate = dates.find((d) => settledDates.has(d)) || dates[0] || '';
+  const activeDate = date || defaultDate;
 
   if (!rcaRows || !rcaRows.length) {
     return (
@@ -230,6 +240,7 @@ export default function RcaTab() {
   }
 
   const dayRows = rcaRows.filter((r) => r.report_date === activeDate);
+  const activeSettled = settledDates.has(activeDate);
   const ordered = (g) => {
     const rows = dayRows.filter(g.match);
     if (g.order) rows.sort((a, b) => g.order.indexOf(a.segment) - g.order.indexOf(b.segment));
@@ -246,10 +257,20 @@ export default function RcaTab() {
         <label className="text-xs text-slate-500 flex flex-col gap-1">
           Report date
           <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={activeDate} onChange={(e) => setDate(e.target.value)}>
-            {dates.map((d) => (<option key={d} value={d}>{d}</option>))}
+            {dates.map((d) => (
+              <option key={d} value={d}>{d}{settledDates.has(d) ? '' : ' (HDC still settling)'}</option>
+            ))}
           </select>
         </label>
       </div>
+
+      {!activeSettled && (
+        <div className="banner banner-amber mb-4" style={{ display: 'block' }}>
+          <span className="text-sm">
+            HDC for <b>{activeDate}</b> hasn’t settled yet — it needs the full 24h view+completion window to close (≈ D-2), so HDC counts read near zero on the latest day(s). Pick an earlier date for settled HDC.
+          </span>
+        </div>
+      )}
 
       {GROUPS.map((g) => {
         const rows = ordered(g);

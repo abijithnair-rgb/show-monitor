@@ -195,6 +195,7 @@ content_final AS (
 -- ===========================================================================
 hdc_series AS (
   SELECT cs.id AS series_id, cs.language, COALESCE(bu.bu_name,'Other') AS bu_name,
+         cs.duration_s,
          TIMESTAMP(cs.approved_on) AS approved_ts, DATE(cs.approved_on,'Asia/Kolkata') AS date_
   FROM seekho.courses_series cs
   JOIN seekho.courses_show csh ON csh.id=cs.show_id AND csh.show_type='active' AND csh.state='live'
@@ -204,26 +205,40 @@ hdc_series AS (
     AND cs.duration_s>0 AND cs.approved_on IS NOT NULL
 ),
 hdc_plays AS (
-  SELECT CAST(series_id AS INT64) AS series_id, firebase_uid AS uid, `timestamp` AS ts
+  SELECT CAST(series_id AS INT64) AS series_id, firebase_uid AS uid, `timestamp` AS ts,
+         CAST(watchtime AS FLOAT64) AS seconds
   FROM content_recommendation.video_play
   WHERE DATE(`timestamp`,'Asia/Kolkata') BETWEEN start_date AND DATE_ADD(end_date, INTERVAL 1 DAY)
     AND package_name NOT IN ('com.bolo.android','com.seekho.ios','com.seekhoai.android','com.seekhoglobal.ios','com.seekhoglobal.android')
     AND (source_screen NOT IN ('from_notification','sharing','from_moe_notification') OR source_screen IS NULL)
 ),
-hdc_views AS (
-  SELECT s.series_id, s.language, s.bu_name, s.date_,
-         COUNT(DISTINCT p.uid) AS raw_views_24h
+-- per series × user: total watch seconds inside the first-24h window
+hdc_user_watch AS (
+  SELECT s.series_id, s.language, s.bu_name, s.date_, s.duration_s,
+         p.uid, SUM(COALESCE(p.seconds,0)) AS watch_seconds
   FROM hdc_series s
-  LEFT JOIN hdc_plays p ON p.series_id=s.series_id
+  JOIN hdc_plays p ON p.series_id=s.series_id
        AND p.ts >= s.approved_ts AND p.ts < TIMESTAMP_ADD(s.approved_ts, INTERVAL 24 HOUR)
-  GROUP BY 1,2,3,4
+  GROUP BY 1,2,3,4,5,6
+),
+-- per series: 24h distinct viewers + 24h completers (>=70% of duration), same-day.
+hdc_views AS (
+  SELECT s.series_id, s.language, s.bu_name, s.date_, s.duration_s,
+         COUNT(DISTINCT w.uid) AS raw_views_24h,
+         COUNT(DISTINCT IF(SAFE_DIVIDE(w.watch_seconds, s.duration_s) >= 0.7, w.uid, NULL)) AS completes_24h
+  FROM hdc_series s
+  LEFT JOIN hdc_user_watch w ON w.series_id=s.series_id
+  GROUP BY 1,2,3,4,5
 ),
 hdc_flags AS (
-  SELECT v.series_id, v.language, v.bu_name, v.date_,
+  SELECT v.series_id, v.language, v.bu_name, v.date_, v.duration_s, v.completes_24h,
     CASE WHEN v.raw_views_24h>=1000 THEN CAST(ROUND(v.raw_views_24h,-2) AS INT64) ELSE v.raw_views_24h END AS views_24h,
-    cp.status AS cr_pass
+    -- CR gate computed SAME-DAY from the 24h window (matches the HDC report), not the
+    -- 72h-frozen content_performance.status: actual CR vs duration-based target CR.
+    ROUND(10 + (141.12/((v.duration_s/60.0)+1.8)), 1) AS target_cr,
+    ROUND(100 * SAFE_DIVIDE(v.completes_24h,
+      CASE WHEN v.raw_views_24h>=1000 THEN ROUND(v.raw_views_24h,-2) ELSE v.raw_views_24h END), 1) AS actual_cr
   FROM hdc_views v
-  LEFT JOIN analytics_content.content_performance cp ON cp.series_id=v.series_id AND cp.publish_date=v.date_
 ),
 hdc_p90 AS (
   SELECT date_, language, APPROX_QUANTILES(views_24h,100)[OFFSET(90)] AS p90_views
@@ -232,8 +247,8 @@ hdc_p90 AS (
 hdc_labeled AS (
   SELECT f.*, LEAST(p.p90_views,1500) AS view_threshold,
     CASE WHEN f.views_24h >= LEAST(p.p90_views,1500) THEN 1 ELSE 0 END AS view_pass,
-    CASE WHEN f.cr_pass=1 THEN 1 ELSE 0 END AS cr_pass_flag,
-    CASE WHEN f.views_24h >= LEAST(p.p90_views,1500) AND f.cr_pass=1 THEN 1 ELSE 0 END AS hdc_flag
+    CASE WHEN f.actual_cr >= f.target_cr THEN 1 ELSE 0 END AS cr_pass_flag,
+    CASE WHEN f.views_24h >= LEAST(p.p90_views,1500) AND f.actual_cr >= f.target_cr THEN 1 ELSE 0 END AS hdc_flag
   FROM hdc_flags f LEFT JOIN hdc_p90 p ON p.date_=f.date_ AND p.language=f.language
 ),
 seg_hdc AS (
@@ -255,7 +270,9 @@ hdc_daily AS (
 ),
 hdc_final AS (
   SELECT h.*,
-    (h.date_<=DATE_SUB(end_date,INTERVAL sr_freeze_days DAY)) AS hdc_is_settled,
+    -- HDC is fully determined once the 24h window has closed and its plays settled.
+    -- That is ~D-2 (end_date is D-1), so HDC settles one day after end_date's data lands.
+    (h.date_<=DATE_SUB(end_date,INTERVAL 1 DAY)) AS hdc_is_settled,
     dod.hdc_count AS hdc_dod, sdlw.hdc_count AS hdc_sdlw,
     ROUND(AVG(h.hdc_count) OVER (PARTITION BY h.level,h.segment ORDER BY h.date_ ROWS BETWEEN 7 PRECEDING AND 1 PRECEDING),1) AS hdc_7davg,
     ROUND(AVG(h.hdc_rate)  OVER (PARTITION BY h.level,h.segment ORDER BY h.date_ ROWS BETWEEN 7 PRECEDING AND 1 PRECEDING),1) AS hdc_rate_7davg,
