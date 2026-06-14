@@ -298,10 +298,14 @@ hdc_p90 AS (
   FROM hdc_flags GROUP BY 1,2
 ),
 hdc_labeled AS (
-  SELECT f.*, LEAST(p.p90_views,1500) AS view_threshold,
-    CASE WHEN f.views_24h >= LEAST(p.p90_views,1500) THEN 1 ELSE 0 END AS view_pass,
+  -- View threshold = LEAST(day×language p90, language-specific cap). Regional caps:
+  -- te 500 / ta 330 / kn 200 / ml 200; Hindi keeps the global 1500.
+  SELECT f.*,
+    LEAST(p.p90_views, CASE f.language WHEN 'te' THEN 500 WHEN 'ta' THEN 330 WHEN 'kn' THEN 200 WHEN 'ml' THEN 200 ELSE 1500 END) AS view_threshold,
+    CASE WHEN f.views_24h >= LEAST(p.p90_views, CASE f.language WHEN 'te' THEN 500 WHEN 'ta' THEN 330 WHEN 'kn' THEN 200 WHEN 'ml' THEN 200 ELSE 1500 END) THEN 1 ELSE 0 END AS view_pass,
     CASE WHEN f.actual_cr >= f.target_cr THEN 1 ELSE 0 END AS cr_pass_flag,
-    CASE WHEN f.views_24h >= LEAST(p.p90_views,1500) AND f.actual_cr >= f.target_cr THEN 1 ELSE 0 END AS hdc_flag
+    CASE WHEN f.views_24h >= LEAST(p.p90_views, CASE f.language WHEN 'te' THEN 500 WHEN 'ta' THEN 330 WHEN 'kn' THEN 200 WHEN 'ml' THEN 200 ELSE 1500 END)
+          AND f.actual_cr >= f.target_cr THEN 1 ELSE 0 END AS hdc_flag
   FROM hdc_flags f LEFT JOIN hdc_p90 p ON p.date_=f.date_ AND p.language=f.language
 ),
 seg_hdc AS (
