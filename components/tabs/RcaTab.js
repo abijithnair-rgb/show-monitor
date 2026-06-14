@@ -44,6 +44,69 @@ function Delta({ value, suffix = '', invert = false }) {
   return <span style={{ color, fontWeight: 600 }}>{up ? '+' : ''}{v}{suffix}</span>;
 }
 
+// Build explicit root-cause findings (what went wrong / notable) as bullet points.
+// tone: 'bad' (red), 'good' (green), 'warn' (amber), 'info' (slate).
+function rcaFindings(r) {
+  const out = [];
+  const n = (x) => num(x);
+  const hdcRate = n(r.hdc_rate), hdcRate7 = n(r.hdc_rate_7davg);
+  const hdcCount = n(r.hdc_count), hdc7 = n(r.hdc_7davg);
+  const supply = n(r.hdc_supply), supply7 = n(r.supply_7davg);
+  const mv = n(r.miss_view_only) ?? 0, mc = n(r.miss_cr_only) ?? 0, mb = n(r.miss_both) ?? 0;
+  const sr = n(r.sr_pct), sr7 = n(r.sr_7davg);
+  const dauPct = n(r.dau_7davg_pct);
+  const hv = String(r.hdc_verdict || '').toUpperCase();
+
+  // --- HDC (the lead) ---
+  if (hv === 'HDC_DROP') {
+    const pp = hdcRate != null && hdcRate7 != null ? Math.round((hdcRate - hdcRate7) * 10) / 10 : null;
+    out.push({ tone: 'bad', text: `HDC dropped: ${hdcCount ?? '—'} hits vs 7-day avg ${hdc7 ?? '—'}${pp != null ? ` (rate ${hdcRate}% vs ${hdcRate7}%, ${pp}pp)` : ''}.` });
+    if (r.hdc_attribution) out.push({ tone: 'bad', text: r.hdc_attribution.replace(/^HDC down /, 'Root cause: ') });
+    else if (supply != null && supply7 != null && supply < supply7 * 0.85) out.push({ tone: 'warn', text: `Fewer launches today (${supply} eligible vs 7dAvg ${supply7}) — part of the HDC drop is supply, not quality.` });
+  } else if (hv === 'HDC_RISE') {
+    out.push({ tone: 'good', text: `HDC rose: ${hdcCount ?? '—'} hits vs 7-day avg ${hdc7 ?? '—'} (rate ${hdcRate}%).` });
+  }
+
+  // --- Miss routing (where the failure sits) ---
+  const totMiss = mv + mc + mb;
+  if (totMiss > 0 && (hv === 'HDC_DROP' || mc + mb >= mv)) {
+    if (mc + mb >= mv && (mc + mb) > 0) {
+      out.push({ tone: 'bad', text: `Mostly CONTENT misses (${mc} cr-only + ${mb} both vs ${mv} view-only) → route to show managers: hook / pacing / target mismatch.` });
+    } else if (mv > 0) {
+      out.push({ tone: 'warn', text: `Mostly VIEW misses (${mv} view-only) → distribution / recommendations problem, not the content itself.` });
+    }
+  }
+
+  // --- Success rate ---
+  if (sr != null && sr7 != null) {
+    const d = Math.round((sr - sr7) * 10) / 10;
+    if (d <= -10) out.push({ tone: 'bad', text: `Success rate fell to ${sr}% vs 7-day avg ${sr7}% (${d}pp) — settled cohort D-10→D-4 underperforming on completion.` });
+    else if (d >= 10) out.push({ tone: 'good', text: `Success rate strong at ${sr}% vs 7-day avg ${sr7}% (+${d}pp).` });
+  }
+
+  // --- Paid DAU ---
+  const dv = String(r.dau_verdict || '').toUpperCase();
+  if (dv === 'REAL_DROP') {
+    out.push({ tone: 'bad', text: `Paid DAU real drop (${dauPct}% vs 7dAvg, down on all 3 baselines).${r.src_drop_driver ? ` Source: ${String(r.src_drop_driver).trim()}.` : ''}${r.cohort_drop_driver ? ` Cohort: ${String(r.cohort_drop_driver).trim()}.` : ''}` });
+  } else if (dv === 'SOFT_DROP') {
+    out.push({ tone: 'warn', text: `Paid DAU soft dip (${dauPct}% vs 7dAvg) — not confirmed on DoD/SDLW, likely weekday noise.` });
+  } else if (dv === 'REAL_RISE') {
+    out.push({ tone: 'good', text: `Paid DAU real rise (+${dauPct}% vs 7dAvg).` });
+  }
+
+  // --- Co-movement (the joint story) ---
+  const p = String(r.comovement_pattern || '');
+  if (/CONTENT-LED DECLINE/.test(p)) out.push({ tone: 'bad', text: 'Joint signal: HDC + SR + DAU all down together — weak fresh content is dragging DAU. Highest-priority block.' });
+  else if (/LEADING RISK/.test(p)) out.push({ tone: 'warn', text: 'Leading risk: HDC is down but DAU still holding on catalog — expect DAU softness in the next few days if HDC stays low.' });
+  else if (/DIVERGENCE/.test(p)) out.push({ tone: 'warn', text: 'Divergence: strong new content but DAU down — distribution isn’t converting the supply.' });
+  else if (/NOT CONTENT/.test(p)) out.push({ tone: 'info', text: 'DAU down while content is healthy — look outside content (distribution / notifications / seasonality).' });
+
+  if (!out.length) out.push({ tone: 'good', text: 'No anomalies — HDC, success rate and paid DAU all within normal range vs baselines.' });
+  return out;
+}
+
+const FINDING_DOT = { bad: '#dc2626', good: '#16a34a', warn: '#d97706', info: '#64748b' };
+
 function Metric({ label, big, sub, tone }) {
   return (
     <div className="kpi">
@@ -82,16 +145,29 @@ function RcaCard({ r }) {
         </div>
       )}
 
+      {/* RCA — what went wrong, as points */}
+      <div className="mb-3">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Root-cause findings</div>
+        <ul className="space-y-1">
+          {rcaFindings(r).map((f, i) => (
+            <li key={i} className="flex gap-2 text-sm text-slate-700">
+              <span className="mt-1.5 shrink-0 rounded-full" style={{ width: 7, height: 7, background: FINDING_DOT[f.tone] }} />
+              <span>{f.text}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
       {/* HDC is the lead block */}
       <div className="grid sm:grid-cols-3 gap-3 mb-3">
         <Metric
-          label="HDC rate"
+          label="HDC rate (D-2)"
           big={hdcRate != null ? `${hdcRate}%` : '—'}
           tone={hdcTone}
           sub={<>7dAvg {hdcRate7 != null ? `${hdcRate7}%` : '—'} · <Delta value={hdcRateDelta} suffix="pp" /></>}
         />
         <Metric
-          label="HDC count"
+          label="HDC count (D-2)"
           big={hdcCount != null ? fmtNum(hdcCount) : '—'}
           sub={<>of {supply != null ? fmtNum(supply) : '—'} eligible · 7dAvg {hdc7 != null ? hdc7 : '—'}</>}
         />
@@ -114,7 +190,7 @@ function RcaCard({ r }) {
           sub={<>vs7dAvg <Delta value={num(r.dau_7davg_pct)} suffix="%" /> · {String(r.dau_verdict || '').replace(/_/g, ' ').toLowerCase()}</>}
         />
         <Metric
-          label="Success rate"
+          label="Success rate (D-10→D-4)"
           big={sr != null ? `${sr}%` : '—'}
           sub={<>7dAvg {sr7 != null ? `${sr7}%` : '—'} · <Delta value={srDelta} suffix="pp" /></>}
         />
@@ -165,7 +241,7 @@ export default function RcaTab() {
       <div className="flex items-end justify-between mb-3 flex-wrap gap-2">
         <div>
           <h2 className="text-xl font-semibold">Daily RCA</h2>
-          <p className="text-sm text-slate-500">Content health for <b>{activeDate}</b> — led by HDC, with its relation to paid DAU & success rate.</p>
+          <p className="text-sm text-slate-500">Content health for <b>{activeDate}</b> — HDC measured at D-2, success rate over the settled D-10→D-4 cohort, with their relation to paid DAU.</p>
         </div>
         <label className="text-xs text-slate-500 flex flex-col gap-1">
           Report date
