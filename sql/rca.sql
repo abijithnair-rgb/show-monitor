@@ -302,13 +302,14 @@ hdc_daily AS (
     ROUND(100*SAFE_DIVIDE(SUM(hdc_flag),COUNT(*)),1) AS hdc_rate
   FROM seg_hdc GROUP BY 1,2,3
 ),
--- Live 24h completion rate per segment per day (avg of per-series actual CR vs target).
--- This is the ONLY source with a value for un-frozen recent days (content_performance.
--- completion_rate is NULL until the 72h freeze), so D-2 etc. always have a number here.
+-- Single-day SUCCESS RATE from the live 24h CR gate = videos crossing their target
+-- completion ÷ total videos approved that day. Same methodology as the D-10→D-4 SR,
+-- but per single day and using the live gate (content_performance.status is NULL for
+-- recent un-frozen days, so D-2 always has a number here).
 hdc_cr_daily AS (
   SELECT level, segment, date_,
-    ROUND(AVG(actual_cr),1) AS day_cr,
-    ROUND(AVG(target_cr),1) AS day_targ
+    ROUND(100*SAFE_DIVIDE(SUM(cr_pass_flag), COUNT(*)),1) AS day_sr,
+    COUNT(*) AS day_n
   FROM seg_hdc GROUP BY 1,2,3
 ),
 hdc_final AS (
@@ -363,8 +364,8 @@ unified AS (
 
     c.series_launched, c.series_success, c.series_fail, c.series_tracking,
     c.sr_pct, c.sr_dod, c.sr_sdlw, c.sr_7davg, c.sr_is_frozen, c.avg_cr, c.avg_targ_cr,
-    cr4.day_cr AS cr_d4, cr4.day_targ AS cr_d4_targ,   -- live 24h completion, D-4 (settled)
-    cr2.day_cr AS cr_d2, cr2.day_targ AS cr_d2_targ,   -- live 24h completion, D-2 (HDC day, not frozen)
+    cr4.day_sr AS cr_d4, cr4.day_n AS cr_d4_n,   -- single-day SR (live CR gate), D-4 (settled)
+    cr2.day_sr AS cr_d2, cr2.day_n AS cr_d2_n,   -- single-day SR (live CR gate), D-2 (HDC day, not frozen)
     c.content_watch_hrs, c.cwh_dod, c.cwh_sdlw,
 
     h.hdc_eligible AS hdc_supply, h.supply_dod, h.supply_7davg,

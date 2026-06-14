@@ -82,10 +82,13 @@ function rcaFindings(r) {
     if (sr < 50) out.push({ tone: 'bad', text: `Success rate ${sr}% over the settled D-10→D-4 cohort — under half of launches are clearing their completion target.` });
     else if (sr >= 75) out.push({ tone: 'good', text: `Success rate strong at ${sr}% over the settled D-10→D-4 cohort.` });
   }
-  // D-4 (latest settled) vs D-2 (HDC day, live) completion-rate read
-  const cr4 = n(r.cr_d4), cr4t = n(r.cr_d4_targ), cr2 = n(r.cr_d2), cr2t = n(r.cr_d2_targ);
-  if (cr4 != null && cr4t != null && cr4 < cr4t) out.push({ tone: 'warn', text: `D-4 completion ${cr4}% is below target ${cr4t}% — newest settled day’s content is under-completing.` });
-  if (cr2 != null && cr2t != null && cr2 < cr2t) out.push({ tone: 'info', text: `D-2 (HDC day) completion ${cr2}% vs target ${cr2t}% — live/un-frozen, early read only.` });
+  // D-4 (latest settled) vs D-2 (HDC day, live) single-day success rate
+  const cr4 = n(r.cr_d4), cr2 = n(r.cr_d2);
+  if (cr4 != null && cr4 < 50) out.push({ tone: 'warn', text: `D-4 single-day success rate ${cr4}% — under half of the newest settled day’s launches cleared their target.` });
+  if (cr2 != null) {
+    if (cr2 < 50) out.push({ tone: 'info', text: `D-2 (HDC day) success rate ${cr2}% — live 24h read (not frozen); early signal that today’s HDC-day launches are under-completing.` });
+    else out.push({ tone: 'info', text: `D-2 (HDC day) success rate ${cr2}% — live 24h read (not frozen), for reference.` });
+  }
 
   // --- Paid DAU ---
   const dv = String(r.dau_verdict || '').toUpperCase();
@@ -131,8 +134,8 @@ function RcaCard({ r }) {
   const sr = num(r.sr_pct);
   const sr7 = num(r.sr_7davg);
   const srDelta = sr != null && sr7 != null ? Math.round((sr - sr7) * 10) / 10 : null;
-  const crD4 = num(r.cr_d4), crD4Targ = num(r.cr_d4_targ);
-  const crD2 = num(r.cr_d2), crD2Targ = num(r.cr_d2_targ);
+  const crD4 = num(r.cr_d4), crD4N = num(r.cr_d4_n);   // single-day success rate, D-4 (settled)
+  const crD2 = num(r.cr_d2), crD2N = num(r.cr_d2_n);   // single-day success rate, D-2 (HDC day, live)
 
   const hdcTone = /_DROP$/.test(String(r.hdc_verdict).toUpperCase()) ? '#dc2626'
     : /_RISE$/.test(String(r.hdc_verdict).toUpperCase()) ? '#16a34a' : '#0f172a';
@@ -197,12 +200,12 @@ function RcaCard({ r }) {
         <Metric
           label="Success rate (D-10→D-4 avg)"
           big={sr != null ? `${sr}%` : '—'}
-          sub={<>D-4 completion {crD4 != null ? `${crD4}%` : '—'}{crD4Targ != null ? ` / target ${crD4Targ}%` : ''}</>}
+          sub={<>D-4 success {crD4 != null ? `${crD4}%` : '—'}{crD4N != null ? ` (${crD4N} videos)` : ''}</>}
         />
         <Metric
-          label="Completion rate (D-2, HDC day)"
+          label="Success rate (D-2, HDC day)"
           big={crD2 != null ? `${crD2}%` : '—'}
-          sub={<>{crD2Targ != null ? `target ${crD2Targ}% · ` : ''}live, not yet frozen</>}
+          sub={<>{crD2N != null ? `${crD2N} videos · ` : ''}live 24h gate, not frozen</>}
         />
       </div>
 
