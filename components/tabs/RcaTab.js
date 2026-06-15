@@ -1,7 +1,7 @@
 'use client';
 import { useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { num, fmtNum, LANG_NAMES } from '@/lib/format';
+import { num, fmtNum, LANG_NAMES, addDays } from '@/lib/format';
 
 // Segment groups in display order (the daily TOTAL/LANGUAGE/BU rows).
 const GROUPS = [
@@ -461,6 +461,11 @@ export default function RcaTab() {
   const dayRows = rcaRows.filter((r) => r.level !== 'SHOW' && r.report_date === activeDate);
   // SHOW rows are anchored at the latest date; show them regardless of the picker.
   const showRows = rcaRows.filter((r) => r.level === 'SHOW');
+  // report_date is the DAU day (D-1). The report is "run" the next morning (D-0), and
+  // HDC/labels reflect D-2 (carried as hdc_report_date). Surface all three clearly.
+  const runDay = activeDate ? addDays(activeDate, 1) : activeDate;   // D-0 — the morning it represents
+  const dauDay = activeDate;                                          // D-1 — settled paid DAU
+  const hdcDay = (dayRows.find((r) => r.hdc_report_date)?.hdc_report_date) || (activeDate ? addDays(activeDate, -1) : activeDate); // D-2
   const ordered = (g) => {
     const rows = dayRows.filter(g.match);
     if (g.order) rows.sort((a, b) => g.order.indexOf(a.segment) - g.order.indexOf(b.segment));
@@ -471,13 +476,13 @@ export default function RcaTab() {
     <div>
       <div className="flex items-end justify-between mb-3 flex-wrap gap-2">
         <div>
-          <h2 className="text-xl font-semibold">Daily RCA</h2>
-          <p className="text-sm text-slate-500">Content health for <b>{activeDate}</b> — HDC (L0) & label split at D-2, success rate over D-10→D-4, paid DAU at D-1.</p>
+          <h2 className="text-xl font-semibold">Daily RCA — report run {runDay}</h2>
+          <p className="text-sm text-slate-500">HDC (L0) & label split for <b>{hdcDay}</b> (D-2, the latest settled 24h window) · paid DAU for <b>{dauDay}</b> (D-1) · success rate over the D-10→D-4 cohort.</p>
         </div>
         <label className="text-xs text-slate-500 flex flex-col gap-1">
-          Report date
+          Report run date
           <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={activeDate} onChange={(e) => setDate(e.target.value)}>
-            {dates.map((d) => (<option key={d} value={d}>{d}{settledDates.has(d) ? '' : ' (settling)'}</option>))}
+            {dates.map((d) => (<option key={d} value={d}>{addDays(d, 1)}{settledDates.has(d) ? '' : ' (settling)'}</option>))}
           </select>
         </label>
       </div>
