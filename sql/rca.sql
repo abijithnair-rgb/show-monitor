@@ -1,20 +1,21 @@
 -- ============================================================================
--- SEEKHO — CONTENT MORNING RCA  (Hindi-anchored, all-levels, single query)
+-- SEEKHO — CONTENT MORNING RCA v2  (Hindi-anchored, LABEL-LED, single query)
 -- ----------------------------------------------------------------------------
--- One Redash-ready BigQuery query that, every morning, tells you WHAT moved
--- and WHY across three health blocks, at three rollup levels, plus how the
--- blocks move TOGETHER (correlation + co-movement pattern).
---   Block A — PAID DAU viewing health  | Block B — CONTENT SUCCESS-RATE
---   Block C — HDC dual-gate health      | Block D — CORRELATION + CO-MOVEMENT
---   Levels: TOTAL (overall_httmk) / LANGUAGE (hi,ta,te,ml,kn) / BU (Hindi only)
--- Run this standalone (daily) and upload the CSV to the Daily RCA tab.
+-- Daily RCA with a full L0–L6 LABEL ENGINE at language + BU level, plus
+-- per-show diagnostics. Run standalone daily; upload to the Daily RCA tab.
 -- ============================================================================
 
 DECLARE end_date           DATE   DEFAULT DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 1 DAY);
 DECLARE scan_lookback_days INT64  DEFAULT 45;
 DECLARE report_window_days INT64  DEFAULT 14;
-DECLARE sr_freeze_days     INT64  DEFAULT 3;     -- 72h tracking, then frozen (SR & HDC)
+DECLARE sr_freeze_days     INT64  DEFAULT 3;
+DECLARE l7_days            INT64  DEFAULT 7;
+DECLARE show_min_supply    INT64  DEFAULT 3;
+DECLARE poor_l0_factor     FLOAT64 DEFAULT 0.6;
+DECLARE high_l45_margin    FLOAT64 DEFAULT 15.0;
+DECLARE active_threshold   FLOAT64 DEFAULT 80.0;
 DECLARE start_date         DATE   DEFAULT DATE_SUB(end_date, INTERVAL scan_lookback_days DAY);
+DECLARE hdc_end_date       DATE   DEFAULT DATE_SUB(end_date, INTERVAL 1 DAY);
 
 WITH
 bu_mapping AS (
@@ -47,8 +48,6 @@ vp_base AS (
     vp.user_id, sd.language, sd.bu_name, vp.watchtime_max,
     COALESCE(vp.source_screen,'unknown') AS source_screen,
     COALESCE(vp.source_section,'unknown') AS source_section,
-    -- Source map mirrors the canonical DAU-source query: notification → push,
-    -- sharing → whatsapp, moe_notification → moe, everything else → organic.
     CASE
       WHEN vp.source_screen='from_notification' THEN 'push'
       WHEN vp.source_screen='from_moe_notification' THEN 'moe'
@@ -72,8 +71,6 @@ seg_play AS (
 user_day_seg AS (
   SELECT level, segment, date_, user_id,
     SUM(watchtime_max) AS total_watchtime, MAX(watchtime_max) AS max_watchtime,
-    -- FIRST-TOUCH source: the source of the user's earliest qualifying (>=5s) play
-    -- that day — i.e. where they actually entered from — not the highest-watchtime one.
     ARRAY_AGG(IF(watchtime_max>=5, source_type, NULL) IGNORE NULLS ORDER BY event_ts ASC LIMIT 1)[SAFE_OFFSET(0)] AS source_type,
     MIN(days_since_payment) AS days_since_payment
   FROM seg_play GROUP BY 1,2,3,4
@@ -186,11 +183,6 @@ content_daily AS (
     ROUND(SUM(watch_hrs),1) AS content_watch_hrs, SUM(starts) AS content_starts, SUM(completes) AS content_completes
   FROM seg_cp GROUP BY 1,2,3
 ),
--- SUCCESS RATE is a POOLED cohort, not a single launch day: for each report_date it
--- pools every series published in [report_date-10, report_date-4] — 7 fully-settled
--- days (each ≥4 days old, past the 72h freeze). Matches the canonical SR query
--- (status=1 success / status=0 fail / NULL tracking excluded). Baseline = the prior
--- 7-day cohort [report_date-17, report_date-11].
 sr_spine AS (
   SELECT DISTINCT level, segment, date_ AS report_date FROM dau_daily
 ),
@@ -223,7 +215,7 @@ content_final AS (
     CAST(NULL AS FLOAT64) AS sr_dod,
     ROUND(100*SAFE_DIVIDE(prv.series_success, NULLIF(prv.series_success+prv.series_fail,0)),1) AS sr_sdlw,
     ROUND(100*SAFE_DIVIDE(prv.series_success, NULLIF(prv.series_success+prv.series_fail,0)),1) AS sr_7davg,
-    TRUE AS sr_is_frozen,   -- cohort window (D-10..D-4) is always past the 72h freeze
+    TRUE AS sr_is_frozen,
     cur.avg_cr, cur.avg_targ_cr,
     cur.content_watch_hrs, CAST(NULL AS FLOAT64) AS cwh_dod, CAST(NULL AS FLOAT64) AS cwh_sdlw
   FROM sr_cur cur
@@ -231,140 +223,196 @@ content_final AS (
 ),
 
 -- ===========================================================================
--- BLOCK C — HDC DUAL-GATE (all-user 24h view gate  +  frozen CR gate)
+-- LABEL ENGINE  (single source of truth for HDC=L0 and L1–L6)
 -- ===========================================================================
-hdc_series AS (
-  -- Eligibility mirrors the HDC report exactly: series state live/expired, has a
-  -- duration & approved_on, AND the creator is quality-approved. (No active-show
-  -- filter — the HDC report does not restrict on show_type/state.)
-  SELECT cs.id AS series_id, cs.language, COALESCE(bu.bu_name,'Other') AS bu_name,
-         cs.duration_s,
-         TIMESTAMP(cs.approved_on) AS approved_ts, DATE(cs.approved_on,'Asia/Kolkata') AS date_
-  FROM seekho.courses_series cs
-  JOIN seekho.users_creatorinfo ci ON cs.creator_id = ci.profile_id
-  JOIN seekho.users_userprofile up ON ci.profile_id = up.user_ptr_id AND up.is_quality_approved = TRUE
+lbl_series AS (
+  SELECT cs.id AS series_id, cs.title AS series_title, cs.show_id, csh.title AS show_name,
+    cs.language, COALESCE(bu.bu_name,'Other') AS bu_name, cs.duration_s,
+    DATETIME(TIMESTAMP(cs.approved_on),'Asia/Kolkata') AS publish_ts_ist,
+    DATETIME(TIMESTAMP_ADD(TIMESTAMP(cs.approved_on),INTERVAL 24 HOUR),'Asia/Kolkata') AS publish_24h_ts_ist,
+    DATE(cs.approved_on,'Asia/Kolkata') AS publish_date
+  FROM `seekho-c084b.seekho.courses_series` cs
+  LEFT JOIN `seekho-c084b.seekho.courses_show` csh ON cs.show_id=csh.id
+  LEFT JOIN seekho.users_creatorinfo ci ON cs.creator_id=ci.profile_id
+  LEFT JOIN seekho.users_userprofile up ON ci.profile_id=up.user_ptr_id
   LEFT JOIN bu_mapping bu ON cs.category_id=bu.category_id
   WHERE DATE(cs.approved_on,'Asia/Kolkata') BETWEEN start_date AND end_date
-    AND cs.language IN ('hi','ta','te','ml','kn') AND cs.state IN ('live','expired')
+    AND cs.language IN ('hi','ta','te','ml','kn')
     AND cs.duration_s>0 AND cs.approved_on IS NOT NULL
+    AND (cs.state='live' OR cs.state='expired')
+    AND up.is_quality_approved=TRUE
 ),
--- Dates already settled in video_play — used so intraday only fills the unsettled tail.
-hdc_settled_dates AS (
-  SELECT DISTINCT DATE(`timestamp`,'Asia/Kolkata') AS settled_date
-  FROM content_recommendation.video_play
-  WHERE DATE(`timestamp`,'Asia/Kolkata') BETWEEN start_date AND DATE_ADD(end_date, INTERVAL 1 DAY)
+lbl_views AS (
+  SELECT se.series_id, se.series_title, se.show_id, se.show_name, se.language, se.bu_name, se.publish_date, se.duration_s,
+    CASE WHEN COUNT(DISTINCT CAST(vp.firebase_uid AS STRING))>=1000 THEN ROUND(COUNT(DISTINCT CAST(vp.firebase_uid AS STRING)),-2)
+         ELSE COUNT(DISTINCT CAST(vp.firebase_uid AS STRING)) END AS views_24h,
+    ROUND(SUM(COALESCE(vp.watchtime,0))/3600.0,2) AS watch_hours
+  FROM lbl_series se
+  LEFT JOIN content_recommendation.video_play_combined vp
+    ON SAFE_CAST(vp.series_id AS INT64)=se.series_id AND vp.firebase_uid IS NOT NULL
+   AND vp.timestamp>=TIMESTAMP(start_date) AND vp.timestamp<TIMESTAMP_ADD(TIMESTAMP(end_date),INTERVAL 2 DAY)
+   AND DATETIME(vp.timestamp,'Asia/Kolkata')>=se.publish_ts_ist AND DATETIME(vp.timestamp,'Asia/Kolkata')<se.publish_24h_ts_ist
+  GROUP BY 1,2,3,4,5,6,7,8
 ),
-hdc_plays AS (
-  SELECT CAST(series_id AS INT64) AS series_id, firebase_uid AS uid, `timestamp` AS ts,
-         CAST(watchtime AS FLOAT64) AS seconds
-  FROM content_recommendation.video_play
-  WHERE DATE(`timestamp`,'Asia/Kolkata') BETWEEN start_date AND DATE_ADD(end_date, INTERVAL 1 DAY)
-    AND package_name NOT IN ('com.bolo.android','com.seekho.ios','com.seekhoai.android','com.seekhoglobal.ios','com.seekhoglobal.android')
-    AND (source_screen NOT IN ('from_notification','sharing','from_moe_notification') OR source_screen IS NULL)
-  UNION ALL
-  -- intraday plays for the latest, not-yet-settled days (avoids double counting)
-  SELECT CAST(series_id AS INT64), firebase_uid, `timestamp`, CAST(MAX(watchtime) AS FLOAT64)
-  FROM content_recommendation.video_play_intraday
-  WHERE DATE(`timestamp`,'Asia/Kolkata') BETWEEN start_date AND DATE_ADD(end_date, INTERVAL 1 DAY)
-    AND DATE(`timestamp`,'Asia/Kolkata') NOT IN (SELECT settled_date FROM hdc_settled_dates)
-    AND package_name NOT IN ('com.bolo.android','com.seekho.ios','com.seekhoai.android','com.seekhoglobal.ios','com.seekhoglobal.android')
-    AND (source_screen NOT IN ('from_notification','sharing','from_moe_notification') OR source_screen IS NULL)
-  GROUP BY `timestamp`, firebase_uid, series_id
+lbl_watch AS (
+  SELECT se.series_id, CAST(rw.user_id AS STRING) AS user_id, SUM(rw.seconds) AS watch_time
+  FROM lbl_series se
+  JOIN analytics_content.s_raw_watching_five_second rw ON rw.series_id=se.series_id
+  JOIN content_recommendation.video_play_combined vp
+    ON SAFE_CAST(vp.series_id AS INT64)=se.series_id AND CAST(vp.firebase_uid AS STRING)=CAST(rw.user_id AS STRING)
+   AND vp.timestamp>=TIMESTAMP(start_date) AND vp.timestamp<TIMESTAMP_ADD(TIMESTAMP(end_date),INTERVAL 2 DAY)
+   AND DATETIME(vp.timestamp,'Asia/Kolkata')>=se.publish_ts_ist AND DATETIME(vp.timestamp,'Asia/Kolkata')<se.publish_24h_ts_ist
+  WHERE rw.date_tz BETWEEN start_date AND DATE_ADD(end_date,INTERVAL 1 DAY) AND rw.platform='android'
+  GROUP BY 1,2
 ),
--- per series × user: total watch seconds inside the first-24h window
-hdc_user_watch AS (
-  SELECT s.series_id, s.language, s.bu_name, s.date_, s.duration_s,
-         p.uid, SUM(COALESCE(p.seconds,0)) AS watch_seconds
-  FROM hdc_series s
-  JOIN hdc_plays p ON p.series_id=s.series_id
-       AND p.ts >= s.approved_ts AND p.ts < TIMESTAMP_ADD(s.approved_ts, INTERVAL 24 HOUR)
-  GROUP BY 1,2,3,4,5,6
+lbl_metrics AS (
+  SELECT v.*, COUNT(DISTINCT CASE WHEN SAFE_DIVIDE(w.watch_time,v.duration_s)>=0.7 THEN w.user_id END) AS completes_24h
+  FROM lbl_views v LEFT JOIN lbl_watch w ON w.series_id=v.series_id
+  GROUP BY 1,2,3,4,5,6,7,8,9,10
 ),
--- per series: 24h distinct viewers + 24h completers (>=70% of duration), same-day.
-hdc_views AS (
-  SELECT s.series_id, s.language, s.bu_name, s.date_, s.duration_s,
-         COUNT(DISTINCT w.uid) AS raw_views_24h,
-         COUNT(DISTINCT IF(SAFE_DIVIDE(w.watch_seconds, s.duration_s) >= 0.7, w.uid, NULL)) AS completes_24h
-  FROM hdc_series s
-  LEFT JOIN hdc_user_watch w ON w.series_id=s.series_id
-  GROUP BY 1,2,3,4,5
+lbl_p AS (
+  SELECT *,
+    PERCENTILE_CONT(views_24h,0.90) OVER (PARTITION BY publish_date,language) AS p90,
+    PERCENTILE_CONT(views_24h,0.50) OVER (PARTITION BY publish_date,language) AS p50,
+    PERCENTILE_CONT(views_24h,0.25) OVER (PARTITION BY publish_date,language) AS p25
+  FROM lbl_metrics
 ),
-hdc_flags AS (
-  SELECT v.series_id, v.language, v.bu_name, v.date_, v.duration_s, v.completes_24h,
-    CASE WHEN v.raw_views_24h>=1000 THEN CAST(ROUND(v.raw_views_24h,-2) AS INT64) ELSE v.raw_views_24h END AS views_24h,
-    -- CR gate computed SAME-DAY from the 24h window (matches the HDC report), not the
-    -- 72h-frozen content_performance.status: actual CR vs duration-based target CR.
-    ROUND(10 + (141.12/((v.duration_s/60.0)+1.8)), 1) AS target_cr,
-    ROUND(100 * SAFE_DIVIDE(v.completes_24h,
-      CASE WHEN v.raw_views_24h>=1000 THEN ROUND(v.raw_views_24h,-2) ELSE v.raw_views_24h END), 1) AS actual_cr
-  FROM hdc_views v
+labeled AS (
+  SELECT *,
+    LEAST(p90, CASE language WHEN 'te' THEN 500 WHEN 'ta' THEN 330 WHEN 'kn' THEN 200 WHEN 'ml' THEN 200 ELSE 1500 END) AS view_threshold_value,
+    ROUND(10+(141.12/((duration_s/60.0)+1.8)),2) AS target_cr,
+    ROUND(100*SAFE_DIVIDE(completes_24h,views_24h),2) AS actual_cr,
+    CASE WHEN views_24h>=LEAST(p90, CASE language WHEN 'te' THEN 500 WHEN 'ta' THEN 330 WHEN 'kn' THEN 200 WHEN 'ml' THEN 200 ELSE 1500 END) THEN 1 ELSE 0 END AS view_thr,
+    CASE WHEN 100*SAFE_DIVIDE(completes_24h,views_24h)>=10+(141.12/((duration_s/60.0)+1.8)) THEN 1 ELSE 0 END AS cr_thr
+  FROM lbl_p
 ),
-hdc_p90 AS (
-  SELECT date_, language, APPROX_QUANTILES(views_24h,100)[OFFSET(90)] AS p90_views
-  FROM hdc_flags GROUP BY 1,2
+labeled2 AS (
+  SELECT *,
+    CASE WHEN view_thr=1 AND cr_thr=1 THEN 1 ELSE 0 END AS hdc_flag,
+    CASE
+      WHEN view_thr=1 AND cr_thr=1 THEN 'L0'
+      WHEN view_thr=1 AND cr_thr=0 THEN 'L1'
+      WHEN cr_thr=1 AND views_24h>1000 THEN 'L2'
+      WHEN views_24h>p50 THEN 'L3'
+      WHEN views_24h>=p25 AND views_24h<=p50 THEN 'L4'
+      WHEN views_24h<p25 THEN 'L5'
+      ELSE 'L6' END AS label
+  FROM labeled
 ),
-hdc_labeled AS (
-  -- View threshold = LEAST(day×language p90, language-specific cap). Regional caps:
-  -- te 500 / ta 330 / kn 200 / ml 200; Hindi keeps the global 1500.
-  SELECT f.*,
-    LEAST(p.p90_views, CASE f.language WHEN 'te' THEN 500 WHEN 'ta' THEN 330 WHEN 'kn' THEN 200 WHEN 'ml' THEN 200 ELSE 1500 END) AS view_threshold,
-    CASE WHEN f.views_24h >= LEAST(p.p90_views, CASE f.language WHEN 'te' THEN 500 WHEN 'ta' THEN 330 WHEN 'kn' THEN 200 WHEN 'ml' THEN 200 ELSE 1500 END) THEN 1 ELSE 0 END AS view_pass,
-    CASE WHEN f.actual_cr >= f.target_cr THEN 1 ELSE 0 END AS cr_pass_flag,
-    CASE WHEN f.views_24h >= LEAST(p.p90_views, CASE f.language WHEN 'te' THEN 500 WHEN 'ta' THEN 330 WHEN 'kn' THEN 200 WHEN 'ml' THEN 200 ELSE 1500 END)
-          AND f.actual_cr >= f.target_cr THEN 1 ELSE 0 END AS hdc_flag
-  FROM hdc_flags f LEFT JOIN hdc_p90 p ON p.date_=f.date_ AND p.language=f.language
+seg_label AS (
+  SELECT 'LANGUAGE' AS level, language AS segment, publish_date, series_id, show_id, hdc_flag, label FROM labeled2
+  UNION ALL SELECT 'TOTAL','overall_httmk', publish_date, series_id, show_id, hdc_flag, label FROM labeled2
+  UNION ALL SELECT 'BU', bu_name, publish_date, series_id, show_id, hdc_flag, label FROM labeled2 WHERE language='hi' AND bu_name<>'Other'
 ),
-seg_hdc AS (
-  SELECT 'LANGUAGE' AS level, language AS segment, date_, view_pass, cr_pass_flag, hdc_flag, actual_cr, target_cr FROM hdc_labeled
-  UNION ALL SELECT 'TOTAL','overall_httmk', date_, view_pass, cr_pass_flag, hdc_flag, actual_cr, target_cr FROM hdc_labeled
-  UNION ALL SELECT 'BU', bu_name, date_, view_pass, cr_pass_flag, hdc_flag, actual_cr, target_cr FROM hdc_labeled WHERE language='hi' AND bu_name<>'Other'
+label_daily AS (
+  SELECT level, segment, publish_date AS date_,
+    COUNT(*) AS supply,
+    SUM(hdc_flag) AS l0,
+    COUNTIF(label='L1') AS l1, COUNTIF(label='L2') AS l2, COUNTIF(label='L3') AS l3,
+    COUNTIF(label='L4') AS l4, COUNTIF(label='L5') AS l5, COUNTIF(label='L6') AS l6,
+    ROUND(100*SAFE_DIVIDE(SUM(hdc_flag),COUNT(*)),1) AS l0_pct,
+    ROUND(100*SAFE_DIVIDE(COUNTIF(label IN ('L4','L5')),COUNT(*)),1) AS l4l5_pct
+  FROM seg_label GROUP BY 1,2,3
 ),
-hdc_daily AS (
-  SELECT level, segment, date_,
-    COUNT(*) AS hdc_eligible,
-    SUM(hdc_flag) AS hdc_count,
-    SUM(view_pass) AS view_pass_cnt,
-    SUM(cr_pass_flag) AS cr_pass_cnt,
-    SUM(CASE WHEN view_pass=0 AND cr_pass_flag=1 THEN 1 ELSE 0 END) AS miss_view_only,
-    SUM(CASE WHEN view_pass=1 AND cr_pass_flag=0 THEN 1 ELSE 0 END) AS miss_cr_only,
-    SUM(CASE WHEN view_pass=0 AND cr_pass_flag=0 THEN 1 ELSE 0 END) AS miss_both,
-    ROUND(100*SAFE_DIVIDE(SUM(hdc_flag),COUNT(*)),1) AS hdc_rate
-  FROM seg_hdc GROUP BY 1,2,3
+label_roll AS (
+  SELECT d.*,
+    dod.l0 AS l0_dod, sdlw.l0 AS l0_sdlw,
+    dod.supply AS supply_dod, sdlw.supply AS supply_sdlw,
+    ROUND(AVG(d.l0)     OVER (PARTITION BY d.level,d.segment ORDER BY d.date_ ROWS BETWEEN 7 PRECEDING AND 1 PRECEDING),1) AS l0_7davg,
+    ROUND(AVG(d.supply) OVER (PARTITION BY d.level,d.segment ORDER BY d.date_ ROWS BETWEEN 7 PRECEDING AND 1 PRECEDING),1) AS supply_7davg,
+    ROUND(AVG(d.l0_pct) OVER (PARTITION BY d.level,d.segment ORDER BY d.date_ ROWS BETWEEN 7 PRECEDING AND 1 PRECEDING),1) AS l0_pct_7davg,
+    SUM(d.l0)     OVER (PARTITION BY d.level,d.segment ORDER BY d.date_ ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS l0_7d,
+    SUM(d.supply) OVER (PARTITION BY d.level,d.segment ORDER BY d.date_ ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS supply_7d,
+    SUM(d.l4+d.l5) OVER (PARTITION BY d.level,d.segment ORDER BY d.date_ ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS l4l5_7d
+  FROM label_daily d
+  LEFT JOIN label_daily dod  ON dod.level=d.level  AND dod.segment=d.segment  AND dod.date_=DATE_SUB(d.date_,INTERVAL 1 DAY)
+  LEFT JOIN label_daily sdlw ON sdlw.level=d.level AND sdlw.segment=d.segment AND sdlw.date_=DATE_SUB(d.date_,INTERVAL 7 DAY)
 ),
--- Single-day SUCCESS RATE from the live 24h CR gate = videos crossing their target
--- completion ÷ total videos approved that day. Same methodology as the D-10→D-4 SR,
--- but per single day and using the live gate (content_performance.status is NULL for
--- recent un-frozen days, so D-2 always has a number here).
-hdc_cr_daily AS (
-  SELECT level, segment, date_,
-    ROUND(100*SAFE_DIVIDE(SUM(cr_pass_flag), COUNT(*)),1) AS day_sr,
-    COUNT(*) AS day_n
-  FROM seg_hdc GROUP BY 1,2,3
-),
-hdc_final AS (
-  SELECT h.*,
-    -- HDC is fully determined once the 24h window has closed and its plays settled.
-    -- That is ~D-2 (end_date is D-1), so HDC settles one day after end_date's data lands.
-    (h.date_<=DATE_SUB(end_date,INTERVAL 1 DAY)) AS hdc_is_settled,
-    dod.hdc_count AS hdc_dod, sdlw.hdc_count AS hdc_sdlw,
-    ROUND(AVG(h.hdc_count) OVER (PARTITION BY h.level,h.segment ORDER BY h.date_ ROWS BETWEEN 7 PRECEDING AND 1 PRECEDING),1) AS hdc_7davg,
-    ROUND(AVG(h.hdc_rate)  OVER (PARTITION BY h.level,h.segment ORDER BY h.date_ ROWS BETWEEN 7 PRECEDING AND 1 PRECEDING),1) AS hdc_rate_7davg,
-    dod.hdc_eligible AS supply_dod,
-    ROUND(AVG(h.hdc_eligible) OVER (PARTITION BY h.level,h.segment ORDER BY h.date_ ROWS BETWEEN 7 PRECEDING AND 1 PRECEDING),1) AS supply_7davg
-  FROM hdc_daily h
-  LEFT JOIN hdc_daily dod  ON dod.level=h.level  AND dod.segment=h.segment  AND dod.date_  = DATE_SUB(h.date_,INTERVAL 1 DAY)
-  LEFT JOIN hdc_daily sdlw ON sdlw.level=h.level AND sdlw.segment=h.segment AND sdlw.date_ = DATE_SUB(h.date_,INTERVAL 7 DAY)
+label_final AS (
+  SELECT r.*,
+    (r.date_ <= DATE_SUB(end_date, INTERVAL 1 DAY)) AS label_is_settled,
+    ROUND(100*SAFE_DIVIDE(r.l0_7d, r.supply_7d),1) AS hdc_contribution_pct_7d,
+    ROUND(100*SAFE_DIVIDE(r.l4l5_7d, r.supply_7d),1) AS l4l5_pct_7d
+  FROM label_roll r
 ),
 
 -- ===========================================================================
--- BLOCK D — CORRELATION (segment-level, over settled frozen days)
+-- SHOW-LEVEL DIAGNOSTICS  (Hindi shows, trailing l7_days)
+-- ===========================================================================
+bu_pool_7d AS (
+  SELECT bu_name,
+    ROUND(100*SAFE_DIVIDE(SUM(hdc_flag),COUNT(*)),1) AS bu_l0_pct,
+    ROUND(100*SAFE_DIVIDE(COUNTIF(label IN ('L4','L5')),COUNT(*)),1) AS bu_l4l5_pct
+  FROM labeled2
+  WHERE language='hi' AND bu_name<>'Other'
+    AND publish_date BETWEEN DATE_SUB(end_date, INTERVAL l7_days DAY) AND hdc_end_date
+  GROUP BY 1
+),
+show_7d AS (
+  SELECT show_id,
+    ANY_VALUE(show_name) AS show_name, ANY_VALUE(bu_name) AS bu_name,
+    COUNT(*) AS supply_7d, SUM(hdc_flag) AS l0,
+    COUNTIF(label='L1') AS l1, COUNTIF(label='L2') AS l2, COUNTIF(label='L3') AS l3,
+    COUNTIF(label='L4') AS l4, COUNTIF(label='L5') AS l5, COUNTIF(label='L6') AS l6,
+    ROUND(100*SAFE_DIVIDE(SUM(hdc_flag),COUNT(*)),1) AS l0_pct,
+    ROUND(100*SAFE_DIVIDE(COUNTIF(label IN ('L4','L5')),COUNT(*)),1) AS l4l5_pct
+  FROM labeled2
+  WHERE language='hi'
+    AND publish_date BETWEEN DATE_SUB(end_date, INTERVAL l7_days DAY) AND hdc_end_date
+  GROUP BY show_id
+),
+show_freq AS (
+  SELECT show_id, ANY_VALUE(freq) AS freq, ANY_VALUE(show_manager) AS show_manager
+  FROM `seekho-c084b.analytics_content.show_detail`
+  WHERE language='hi' AND freq IS NOT NULL
+  GROUP BY show_id
+),
+show_diag AS (
+  SELECT
+    s.show_id, s.show_name, s.bu_name, s.supply_7d,
+    s.l0, s.l1, s.l2, s.l3, s.l4, s.l5, s.l6, s.l0_pct, s.l4l5_pct,
+    f.freq, f.show_manager,
+    bp.bu_l0_pct, bp.bu_l4l5_pct,
+    ROUND(SAFE_DIVIDE(s.supply_7d*100.0, f.freq),0) AS supply_vs_freq_pct,
+    CASE WHEN f.freq IS NULL THEN NULL
+         WHEN SAFE_DIVIDE(s.supply_7d*100.0, f.freq) >= active_threshold THEN 'Active' ELSE 'Inactive' END AS active_status,
+    CASE WHEN f.freq IS NOT NULL AND SAFE_DIVIDE(s.supply_7d*100.0, f.freq) < active_threshold THEN 1 ELSE 0 END AS needs_supply_fix_flag,
+    CASE WHEN s.supply_7d>=show_min_supply AND bp.bu_l0_pct IS NOT NULL AND s.l0_pct < poor_l0_factor*bp.bu_l0_pct THEN 1 ELSE 0 END AS poor_l0_flag,
+    CASE WHEN s.supply_7d>=show_min_supply AND bp.bu_l4l5_pct IS NOT NULL AND s.l4l5_pct > bp.bu_l4l5_pct+high_l45_margin THEN 1 ELSE 0 END AS high_l45_flag
+  FROM show_7d s
+  LEFT JOIN show_freq f ON f.show_id=s.show_id
+  LEFT JOIN bu_pool_7d bp ON bp.bu_name=s.bu_name
+),
+show_reco AS (
+  SELECT d.*,
+    TRIM(CONCAT(
+      CASE WHEN d.needs_supply_fix_flag=1
+           THEN CONCAT('SUPPLY: ',CAST(d.supply_7d AS STRING),'/',CAST(d.freq AS STRING),' wk (',CAST(d.supply_vs_freq_pct AS STRING),'% of target) — raise output. ')
+           ELSE '' END,
+      CASE WHEN d.poor_l0_flag=1
+           THEN CONCAT('HIT-RATE: L0 ',CAST(d.l0_pct AS STRING),'% vs BU ',CAST(d.bu_l0_pct AS STRING),'% — rework formats/hooks. ')
+           ELSE '' END,
+      CASE WHEN d.high_l45_flag=1
+           THEN CONCAT('TAIL: L4+L5 ',CAST(d.l4l5_pct AS STRING),'% vs BU ',CAST(d.bu_l4l5_pct AS STRING),'% — review topics/thumbnails/discovery. ')
+           ELSE '' END,
+      CASE WHEN d.supply_7d<show_min_supply
+           THEN CONCAT('(low sample: only ',CAST(d.supply_7d AS STRING),' series in ',CAST(l7_days AS STRING),'d — quality flags suppressed) ')
+           ELSE '' END,
+      CASE WHEN d.needs_supply_fix_flag=0 AND d.poor_l0_flag=0 AND d.high_l45_flag=0 AND d.supply_7d>=show_min_supply
+           THEN 'Healthy.' ELSE '' END
+    )) AS show_recommendation
+  FROM show_diag d
+),
+
+-- ===========================================================================
+-- BLOCK D — CORRELATION  (uses label L0 as the HDC series)
 -- ===========================================================================
 corr_src AS (
   SELECT a.level, a.segment, a.date_, a.dau,
-         c.sr_pct, CAST(h.hdc_count AS FLOAT64) AS hdc_count
+         c.sr_pct, CAST(l.l0 AS FLOAT64) AS hdc_count
   FROM dau_daily a
   LEFT JOIN content_daily c ON c.level=a.level AND c.segment=a.segment AND c.date_=a.date_
-  LEFT JOIN hdc_daily   h ON h.level=a.level AND h.segment=a.segment AND h.date_=a.date_
+  LEFT JOIN label_daily  l ON l.level=a.level AND l.segment=a.segment AND l.date_=a.date_
   WHERE a.date_ <= DATE_SUB(end_date, INTERVAL sr_freeze_days DAY)
 ),
 corr_block AS (
@@ -376,37 +424,39 @@ corr_block AS (
 ),
 
 -- ===========================================================================
--- UNIFY + AUTO-RCA (English narrative) + CO-MOVEMENT PATTERN
+-- UNIFY (A) — SEGMENT ROWS
 -- ===========================================================================
-unified AS (
+seg_unified AS (
   SELECT
-    COALESCE(a.date_, c.date_, h.date_) AS report_date,
-    COALESCE(a.level, c.level, h.level) AS level,
-    COALESCE(a.segment, c.segment, h.segment) AS segment,
-
+    COALESCE(a.date_, c.date_) AS report_date,
+    COALESCE(a.level, c.level) AS level,
+    COALESCE(a.segment, c.segment) AS segment,
+    l.date_ AS hdc_report_date,
+    CAST(NULL AS STRING) AS show_name,
+    CAST(NULL AS STRING) AS show_manager,
     a.dau, a.dau_dod, a.dau_sdlw, a.dau_7davg, a.dau_dod_pct, a.dau_sdlw_pct, a.dau_7davg_pct,
     a.mins_per_dau, a.mins_per_dau_dod,
     a.dau_organic, a.dau_push, a.dau_moe, a.dau_whatsapp,
-    a.dau_organic_dod, a.dau_push_dod, a.dau_moe_dod, a.dau_whatsapp_dod,
     a.dau_new, a.dau_retained, a.dau_resurrected,
-    a.dau_new_dod, a.dau_retained_dod, a.dau_resurrected_dod,
     a.dau_d0, a.dau_d1_d3, a.dau_d4_d7, a.dau_d8_d14, a.dau_d15_d30, a.dau_d30_plus,
-    a.dau_d0_dod, a.dau_d1_d3_dod, a.dau_d4_d7_dod, a.dau_d8_d14_dod, a.dau_d15_d30_dod, a.dau_d30_plus_dod,
     a.src_drop_driver, a.usertype_drop_driver, a.cohort_drop_driver, a.top_surface_drops, a.peak_drop_hour,
-
     c.series_launched, c.series_success, c.series_fail, c.series_tracking,
-    c.sr_pct, c.sr_dod, c.sr_sdlw, c.sr_7davg, c.sr_is_frozen, c.avg_cr, c.avg_targ_cr,
-    cr4.day_sr AS cr_d4, cr4.day_n AS cr_d4_n,   -- single-day SR (live CR gate), D-4 (settled)
-    cr2.day_sr AS cr_d2, cr2.day_n AS cr_d2_n,   -- single-day SR (live CR gate), D-2 (HDC day, not frozen)
-    c.content_watch_hrs, c.cwh_dod, c.cwh_sdlw,
-
-    h.hdc_eligible AS hdc_supply, h.supply_dod, h.supply_7davg,
-    h.hdc_count, h.hdc_dod, h.hdc_sdlw, h.hdc_7davg, h.hdc_is_settled,
-    h.hdc_rate, h.hdc_rate_7davg,
-    h.view_pass_cnt, h.cr_pass_cnt, h.miss_view_only, h.miss_cr_only, h.miss_both,
-
+    c.sr_pct, c.sr_sdlw, c.sr_7davg, c.sr_is_frozen, c.avg_cr, c.avg_targ_cr, c.content_watch_hrs,
+    l.supply, l.l0, l.l1, l.l2, l.l3, l.l4, l.l5, l.l6,
+    l.l0_pct, l.l4l5_pct,
+    l.l0 AS hdc_count, l.l0_pct AS hdc_rate, l.l0_7davg AS hdc_count_7davg, l.supply_7davg,
+    l.l0_dod AS hdc_dod, l.l0_sdlw AS hdc_sdlw, l.supply_dod, l.supply_sdlw,
+    l.label_is_settled,
+    l.l0_7d AS hdc_7d, l.supply_7d AS supply_7d_seg, l.l4l5_7d,
+    l.hdc_contribution_pct_7d, l.l4l5_pct_7d,
+    CAST(NULL AS INT64)   AS show_supply_7d,
+    CAST(NULL AS INT64)   AS show_freq,
+    CAST(NULL AS FLOAT64) AS show_supply_vs_freq_pct,
+    CAST(NULL AS STRING)  AS show_active_status,
+    CAST(NULL AS FLOAT64) AS bu_l0_pct, CAST(NULL AS FLOAT64) AS bu_l4l5_pct,
+    CAST(NULL AS INT64)   AS poor_l0_flag, CAST(NULL AS INT64) AS high_l45_flag, CAST(NULL AS INT64) AS needs_supply_fix_flag,
+    CAST(NULL AS STRING)  AS show_recommendation,
     cb.corr_hdc_dau, cb.corr_sr_dau, cb.corr_hdc_sr,
-
     CASE
       WHEN a.dau IS NULL THEN 'no_paid_dau_row'
       WHEN a.dau_dod IS NULL OR a.dau_sdlw IS NULL OR a.dau_7davg IS NULL THEN 'baseline_incomplete'
@@ -414,57 +464,42 @@ unified AS (
       WHEN a.dau>a.dau_dod*1.03 AND a.dau>a.dau_sdlw*1.03 AND a.dau>a.dau_7davg*1.03 THEN 'REAL_RISE'
       WHEN a.dau<a.dau_7davg*0.97 THEN 'soft_drop' WHEN a.dau>a.dau_7davg*1.03 THEN 'soft_rise' ELSE 'normal'
     END AS dau_verdict,
-
     CASE
       WHEN c.sr_pct IS NULL THEN 'no_content_launched'
       WHEN NOT c.sr_is_frozen THEN 'still_tracking_72h'
       WHEN c.sr_7davg IS NULL THEN 'baseline_incomplete'
       WHEN c.sr_pct < c.sr_7davg-10 THEN 'SR_DROP' WHEN c.sr_pct > c.sr_7davg+10 THEN 'SR_RISE' ELSE 'normal'
     END AS sr_verdict,
-
     CASE
-      WHEN h.hdc_count IS NULL THEN 'no_content_launched'
-      WHEN NOT h.hdc_is_settled THEN 'still_settling'
-      WHEN h.hdc_7davg IS NULL THEN 'baseline_incomplete'
-      WHEN h.hdc_count < h.hdc_7davg - GREATEST(1, 0.20*h.hdc_7davg) THEN 'HDC_DROP'
-      WHEN h.hdc_count > h.hdc_7davg + GREATEST(1, 0.20*h.hdc_7davg) THEN 'HDC_RISE'
+      WHEN l.l0 IS NULL THEN 'no_content_launched'
+      WHEN NOT (l.date_ <= DATE_SUB(end_date, INTERVAL 1 DAY)) THEN 'still_settling'
+      WHEN l.l0_7davg IS NULL THEN 'baseline_incomplete'
+      WHEN l.l0 < l.l0_7davg - GREATEST(1, 0.20*l.l0_7davg) THEN 'HDC_DROP'
+      WHEN l.l0 > l.l0_7davg + GREATEST(1, 0.20*l.l0_7davg) THEN 'HDC_RISE'
       ELSE 'normal'
     END AS hdc_verdict,
-
-    -- Attribution: only call it once HDC actually dropped. Then decide SUPPLY vs the
-    -- dominant miss type — VIEW misses = distribution/reach, CR misses = content quality.
     CASE
-      WHEN h.hdc_count IS NULL OR NOT h.hdc_is_settled OR h.hdc_7davg IS NULL THEN NULL
-      WHEN NOT (h.hdc_count < h.hdc_7davg - GREATEST(1,0.20*h.hdc_7davg)) THEN NULL
-      WHEN h.hdc_eligible < h.supply_7davg*0.85
-        THEN 'HDC down mainly SUPPLY (fewer launches)'
-      -- hit-rate fell AND the misses are mostly content (CR) failures
-      WHEN h.hdc_rate < h.hdc_rate_7davg-5 AND (h.miss_cr_only + h.miss_both) > h.miss_view_only
-        THEN 'HDC down mainly CONTENT (CR misses — hook/pacing/target)'
-      -- hit-rate fell but the misses are mostly reach (view) failures
-      WHEN h.hdc_rate < h.hdc_rate_7davg-5 AND h.miss_view_only >= (h.miss_cr_only + h.miss_both)
-        THEN 'HDC down mainly DISTRIBUTION (view misses — reach/recommendations)'
-      WHEN h.hdc_rate < h.hdc_rate_7davg-5
-        THEN 'HDC down mainly QUALITY (hit-rate fell)'
-      ELSE 'HDC down (supply+quality mixed)'
+      WHEN l.l0 IS NULL OR NOT (l.date_ <= DATE_SUB(end_date, INTERVAL 1 DAY)) OR l.l0_7davg IS NULL THEN NULL
+      WHEN NOT (l.l0 < l.l0_7davg - GREATEST(1,0.20*l.l0_7davg)) THEN NULL
+      WHEN l.supply < l.supply_7davg*0.85 THEN 'HDC down mainly SUPPLY (fewer launches)'
+      WHEN l.l1 >= (l.l4+l.l5) THEN 'HDC down mainly CONTENT (L1 reach-but-no-completion — hook/pacing/target CR)'
+      ELSE 'HDC down mainly DISTRIBUTION/REACH (L3–L5 heavy — recommendations/thumbnails/topics)'
     END AS hdc_attribution,
-
     CASE
-      WHEN a.dau IS NULL AND h.hdc_count IS NULL THEN NULL
-      WHEN a.dau_7davg IS NULL OR h.hdc_7davg IS NULL OR NOT h.hdc_is_settled THEN 'insufficient_baseline'
-      WHEN h.hdc_count < h.hdc_7davg*0.8 AND c.sr_pct < c.sr_7davg-10 AND a.dau < a.dau_7davg*0.97
-        THEN 'CONTENT-LED DECLINE: HDC+SR+DAU all down — fresh content weak AND it is pulling DAU down'
-      WHEN h.hdc_count < h.hdc_7davg*0.8 AND a.dau >= a.dau_7davg*0.97
+      WHEN a.dau IS NULL AND l.l0 IS NULL THEN NULL
+      WHEN a.dau_7davg IS NULL OR l.l0_7davg IS NULL OR NOT (l.date_ <= DATE_SUB(end_date, INTERVAL 1 DAY)) THEN 'insufficient_baseline'
+      WHEN l.l0 < l.l0_7davg*0.8 AND c.sr_pct < c.sr_7davg-10 AND a.dau < a.dau_7davg*0.97
+        THEN 'CONTENT-LED DECLINE: HDC+SR+DAU all down — fresh content weak AND pulling DAU down'
+      WHEN l.l0 < l.l0_7davg*0.8 AND a.dau >= a.dau_7davg*0.97
         THEN 'LEADING RISK: HDC down but DAU still holding on catalog — expect DAU softness if it persists'
-      WHEN h.hdc_count > h.hdc_7davg*1.2 AND a.dau > a.dau_7davg*1.03
+      WHEN l.l0 > l.l0_7davg*1.2 AND a.dau > a.dau_7davg*1.03
         THEN 'FRESH HITS LIFTING DAU: HDC up + DAU up'
-      WHEN a.dau < a.dau_7davg*0.97 AND h.hdc_count >= h.hdc_7davg*0.8 AND c.sr_pct >= c.sr_7davg-10
+      WHEN a.dau < a.dau_7davg*0.97 AND l.l0 >= l.l0_7davg*0.8 AND c.sr_pct >= c.sr_7davg-10
         THEN 'NOT CONTENT: DAU down while content healthy — check distribution/notif/seasonality'
-      WHEN h.hdc_count > h.hdc_7davg*1.2 AND a.dau < a.dau_7davg*0.97
+      WHEN l.l0 > l.l0_7davg*1.2 AND a.dau < a.dau_7davg*0.97
         THEN 'DIVERGENCE: strong new content but DAU down — distribution not converting supply'
       ELSE 'aligned/normal'
     END AS comovement_pattern,
-
     CONCAT(
       CASE
         WHEN a.dau IS NULL THEN ''
@@ -478,18 +513,19 @@ unified AS (
         ELSE CONCAT('Paid DAU normal (',CAST(a.dau AS STRING),'). ')
       END,
       CASE
-        WHEN h.hdc_count IS NULL THEN ''
-        WHEN NOT h.hdc_is_settled THEN CONCAT('HDC still settling (',CAST(h.hdc_eligible AS STRING),' launched). ')
-        WHEN h.hdc_7davg IS NULL THEN CONCAT('HDC ',CAST(h.hdc_count AS STRING),'/',CAST(h.hdc_eligible AS STRING),' (baseline incomplete). ')
-        WHEN h.hdc_count < h.hdc_7davg - GREATEST(1,0.20*h.hdc_7davg)
-          THEN CONCAT('HDC DROP: ',CAST(h.hdc_count AS STRING),' vs 7dAvg ',CAST(h.hdc_7davg AS STRING),
-               ' (rate ',CAST(h.hdc_rate AS STRING),'% vs ',CAST(h.hdc_rate_7davg AS STRING),'%; misses view-only/cr-only/both = ',
-               CAST(h.miss_view_only AS STRING),'/',CAST(h.miss_cr_only AS STRING),'/',CAST(h.miss_both AS STRING),
-               '). ',
-               CASE WHEN h.miss_cr_only+h.miss_both >= h.miss_view_only THEN 'Mostly CONTENT misses -> show managers. ' ELSE 'Mostly VIEW misses -> recommendations/distribution. ' END)
-        WHEN h.hdc_count > h.hdc_7davg + GREATEST(1,0.20*h.hdc_7davg) THEN CONCAT('HDC up: ',CAST(h.hdc_count AS STRING),' vs 7dAvg ',CAST(h.hdc_7davg AS STRING),'. ')
-        ELSE CONCAT('HDC steady: ',CAST(h.hdc_count AS STRING),'/',CAST(h.hdc_eligible AS STRING),' (rate ',CAST(h.hdc_rate AS STRING),'%). ')
+        WHEN l.l0 IS NULL THEN ''
+        WHEN NOT (l.date_ <= DATE_SUB(end_date, INTERVAL 1 DAY)) THEN CONCAT('HDC still settling (',CAST(l.supply AS STRING),' launched). ')
+        WHEN l.l0_7davg IS NULL THEN CONCAT('HDC(L0) ',CAST(l.l0 AS STRING),'/',CAST(l.supply AS STRING),' (baseline incomplete). ')
+        WHEN l.l0 < l.l0_7davg - GREATEST(1,0.20*l.l0_7davg)
+          THEN CONCAT('HDC DROP: L0 ',CAST(l.l0 AS STRING),' vs 7dAvg ',CAST(l.l0_7davg AS STRING),
+               ' (L0% ',CAST(l.l0_pct AS STRING),'% vs ',CAST(l.l0_pct_7davg AS STRING),'%; split L1/L2/L3/L4/L5 = ',
+               CAST(l.l1 AS STRING),'/',CAST(l.l2 AS STRING),'/',CAST(l.l3 AS STRING),'/',CAST(l.l4 AS STRING),'/',CAST(l.l5 AS STRING),'). ',
+               CASE WHEN l.l1 >= (l.l4+l.l5) THEN 'Mostly L1 (CR misses) -> content/hook. ' ELSE 'Mostly tail (L4/L5) -> reach/discovery. ' END)
+        WHEN l.l0 > l.l0_7davg + GREATEST(1,0.20*l.l0_7davg) THEN CONCAT('HDC up: L0 ',CAST(l.l0 AS STRING),' vs 7dAvg ',CAST(l.l0_7davg AS STRING),'. ')
+        ELSE CONCAT('HDC steady: L0 ',CAST(l.l0 AS STRING),'/',CAST(l.supply AS STRING),' (L0% ',CAST(l.l0_pct AS STRING),'%; L4+L5 ',CAST(l.l4l5_pct AS STRING),'%). ')
       END,
+      CASE
+        WHEN l.hdc_contribution_pct_7d IS NOT NULL THEN CONCAT('7d HDC contribution ',CAST(l.hdc_contribution_pct_7d AS STRING),'% (',CAST(l.l0_7d AS STRING),'/',CAST(l.supply_7d AS STRING),'). ') ELSE '' END,
       CASE
         WHEN c.sr_pct IS NULL THEN 'No active-show series launched.'
         WHEN NOT c.sr_is_frozen THEN CONCAT('SR tracking (<72h): ',CAST(c.series_tracking AS STRING),' not yet frozen.')
@@ -499,20 +535,64 @@ unified AS (
         ELSE CONCAT('SR steady: ',CAST(c.sr_pct AS STRING),'%.')
       END
     ) AS auto_rca
-
   FROM dau_final a
   FULL OUTER JOIN content_final c ON a.level=c.level AND a.segment=c.segment AND a.date_=c.date_
-  FULL OUTER JOIN hdc_final h
-    ON COALESCE(a.level,c.level)=h.level AND COALESCE(a.segment,c.segment)=h.segment AND COALESCE(a.date_,c.date_)=h.date_
-  LEFT JOIN corr_block cb ON cb.level=COALESCE(a.level,c.level,h.level) AND cb.segment=COALESCE(a.segment,c.segment,h.segment)
-  LEFT JOIN hdc_cr_daily cr4 ON cr4.level=COALESCE(a.level,c.level,h.level) AND cr4.segment=COALESCE(a.segment,c.segment,h.segment) AND cr4.date_=DATE_SUB(COALESCE(a.date_,c.date_,h.date_), INTERVAL 4 DAY)
-  LEFT JOIN hdc_cr_daily cr2 ON cr2.level=COALESCE(a.level,c.level,h.level) AND cr2.segment=COALESCE(a.segment,c.segment,h.segment) AND cr2.date_=DATE_SUB(COALESCE(a.date_,c.date_,h.date_), INTERVAL 2 DAY)
+  LEFT JOIN label_final l
+    ON l.level=COALESCE(a.level,c.level) AND l.segment=COALESCE(a.segment,c.segment) AND l.date_=DATE_SUB(COALESCE(a.date_,c.date_), INTERVAL 1 DAY)
+  LEFT JOIN corr_block cb ON cb.level=COALESCE(a.level,c.level) AND cb.segment=COALESCE(a.segment,c.segment)
+),
+
+-- ===========================================================================
+-- UNIFY (B) — SHOW ROWS
+-- ===========================================================================
+show_unified AS (
+  SELECT
+    end_date AS report_date,
+    'SHOW' AS level,
+    r.bu_name AS segment,
+    hdc_end_date AS hdc_report_date,
+    r.show_name, r.show_manager,
+    CAST(NULL AS INT64) AS dau, CAST(NULL AS INT64) AS dau_dod, CAST(NULL AS INT64) AS dau_sdlw, CAST(NULL AS FLOAT64) AS dau_7davg,
+    CAST(NULL AS FLOAT64) AS dau_dod_pct, CAST(NULL AS FLOAT64) AS dau_sdlw_pct, CAST(NULL AS FLOAT64) AS dau_7davg_pct,
+    CAST(NULL AS FLOAT64) AS mins_per_dau, CAST(NULL AS FLOAT64) AS mins_per_dau_dod,
+    CAST(NULL AS INT64) AS dau_organic, CAST(NULL AS INT64) AS dau_push, CAST(NULL AS INT64) AS dau_moe, CAST(NULL AS INT64) AS dau_whatsapp,
+    CAST(NULL AS INT64) AS dau_new, CAST(NULL AS INT64) AS dau_retained, CAST(NULL AS INT64) AS dau_resurrected,
+    CAST(NULL AS INT64) AS dau_d0, CAST(NULL AS INT64) AS dau_d1_d3, CAST(NULL AS INT64) AS dau_d4_d7, CAST(NULL AS INT64) AS dau_d8_d14, CAST(NULL AS INT64) AS dau_d15_d30, CAST(NULL AS INT64) AS dau_d30_plus,
+    CAST(NULL AS STRING) AS src_drop_driver, CAST(NULL AS STRING) AS usertype_drop_driver, CAST(NULL AS STRING) AS cohort_drop_driver, CAST(NULL AS STRING) AS top_surface_drops, CAST(NULL AS STRING) AS peak_drop_hour,
+    CAST(NULL AS INT64) AS series_launched, CAST(NULL AS INT64) AS series_success, CAST(NULL AS INT64) AS series_fail, CAST(NULL AS INT64) AS series_tracking,
+    CAST(NULL AS FLOAT64) AS sr_pct, CAST(NULL AS FLOAT64) AS sr_sdlw, CAST(NULL AS FLOAT64) AS sr_7davg, CAST(NULL AS BOOL) AS sr_is_frozen,
+    CAST(NULL AS FLOAT64) AS avg_cr, CAST(NULL AS FLOAT64) AS avg_targ_cr, CAST(NULL AS FLOAT64) AS content_watch_hrs,
+    r.supply_7d AS supply, r.l0, r.l1, r.l2, r.l3, r.l4, r.l5, r.l6,
+    r.l0_pct, r.l4l5_pct,
+    r.l0 AS hdc_count, r.l0_pct AS hdc_rate, CAST(NULL AS FLOAT64) AS hdc_count_7davg, CAST(NULL AS FLOAT64) AS supply_7davg,
+    CAST(NULL AS INT64) AS hdc_dod, CAST(NULL AS INT64) AS hdc_sdlw, CAST(NULL AS INT64) AS supply_dod, CAST(NULL AS INT64) AS supply_sdlw,
+    TRUE AS label_is_settled,
+    CAST(r.l0 AS INT64) AS hdc_7d, r.supply_7d AS supply_7d_seg, CAST((r.l4+r.l5) AS INT64) AS l4l5_7d,
+    r.l0_pct AS hdc_contribution_pct_7d, r.l4l5_pct AS l4l5_pct_7d,
+    r.supply_7d AS show_supply_7d,
+    r.freq AS show_freq,
+    r.supply_vs_freq_pct AS show_supply_vs_freq_pct,
+    r.active_status AS show_active_status,
+    r.bu_l0_pct, r.bu_l4l5_pct,
+    r.poor_l0_flag, r.high_l45_flag, r.needs_supply_fix_flag,
+    r.show_recommendation,
+    CAST(NULL AS FLOAT64) AS corr_hdc_dau, CAST(NULL AS FLOAT64) AS corr_sr_dau, CAST(NULL AS FLOAT64) AS corr_hdc_sr,
+    CAST(NULL AS STRING) AS dau_verdict,
+    CAST(NULL AS STRING) AS sr_verdict,
+    CASE WHEN r.poor_l0_flag=1 THEN 'POOR_L0' WHEN r.high_l45_flag=1 THEN 'HIGH_L4L5' ELSE 'ok' END AS hdc_verdict,
+    CASE WHEN r.poor_l0_flag=1 AND r.high_l45_flag=1 THEN 'quality: low hits AND heavy tail'
+         WHEN r.poor_l0_flag=1 THEN 'quality: low hit-rate vs BU'
+         WHEN r.high_l45_flag=1 THEN 'quality: heavy low-view tail vs BU' ELSE NULL END AS hdc_attribution,
+    CASE WHEN r.needs_supply_fix_flag=1 THEN 'supply gap vs frequency target' ELSE NULL END AS comovement_pattern,
+    r.show_recommendation AS auto_rca
+  FROM show_reco r
 )
 
-SELECT *
-FROM unified
+SELECT * FROM seg_unified
 WHERE report_date BETWEEN DATE_SUB(end_date, INTERVAL report_window_days DAY) AND end_date
+UNION ALL
+SELECT * FROM show_unified
 ORDER BY
   report_date DESC,
-  CASE level WHEN 'TOTAL' THEN 1 WHEN 'LANGUAGE' THEN 2 WHEN 'BU' THEN 3 ELSE 4 END,
-  segment;
+  CASE level WHEN 'TOTAL' THEN 1 WHEN 'LANGUAGE' THEN 2 WHEN 'BU' THEN 3 WHEN 'SHOW' THEN 4 ELSE 5 END,
+  segment, show_name;
