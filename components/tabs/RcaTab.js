@@ -265,25 +265,167 @@ function ShowRow({ s, kind }) {
   );
 }
 
-function ShowTriage({ shows }) {
-  const poor = shows.filter((s) => num(s.poor_l0_flag) === 1).sort((a, b) => (num(a.l0_pct) || 0) - (num(b.l0_pct) || 0));
-  const high = shows.filter((s) => num(s.high_l45_flag) === 1).sort((a, b) => (num(b.l4l5_pct) || 0) - (num(a.l4l5_pct) || 0));
-  const supply = shows.filter((s) => num(s.needs_supply_fix_flag) === 1).sort((a, b) => (num(a.show_supply_vs_freq_pct) || 0) - (num(b.show_supply_vs_freq_pct) || 0));
-  if (!shows.length) return null;
-  const Block = ({ title, desc, list, kind }) => (
+// Collapsible block with its own open/close state.
+function TriageBlock({ title, desc, list, kind, defaultOpen }) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  return (
     <div className="card p-4 mb-3">
-      <div className="font-semibold mb-0.5">{title} <span className="hint">({list.length})</span></div>
-      <div className="hint mb-2">{desc}</div>
-      {list.length ? list.map((s) => <ShowRow key={`${kind}-${s.show_name}`} s={s} kind={kind} />)
-        : <div className="text-sm text-slate-400">None this week. ✓</div>}
+      <button className="w-full flex items-center justify-between gap-2 text-left" onClick={() => setOpen((v) => !v)}>
+        <div>
+          <span className="font-semibold">{title}</span> <span className="hint">({list.length})</span>
+          <div className="hint">{desc}</div>
+        </div>
+        <span className="text-slate-400 text-sm shrink-0">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="mt-2">
+          {list.length ? list.map((s) => <ShowRow key={`${kind}-${s.show_name}`} s={s} kind={kind} />)
+            : <div className="text-sm text-slate-400">None this week. ✓</div>}
+        </div>
+      )}
     </div>
   );
+}
+
+function ShowTriage({ shows }) {
+  const [bu, setBu] = useState('');
+  if (!shows.length) return null;
+  const bus = [...new Set(shows.map((s) => s.segment).filter(Boolean))].sort();
+  const scoped = bu ? shows.filter((s) => s.segment === bu) : shows;
+  const poor = scoped.filter((s) => num(s.poor_l0_flag) === 1).sort((a, b) => (num(a.l0_pct) || 0) - (num(b.l0_pct) || 0));
+  const high = scoped.filter((s) => num(s.high_l45_flag) === 1).sort((a, b) => (num(b.l4l5_pct) || 0) - (num(a.l4l5_pct) || 0));
+  const supply = scoped.filter((s) => num(s.needs_supply_fix_flag) === 1).sort((a, b) => (num(a.show_supply_vs_freq_pct) || 0) - (num(b.show_supply_vs_freq_pct) || 0));
   return (
     <div className="mb-5">
-      <div className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2">Hindi show triage — trailing 7 days</div>
-      <Block title="Poor L0% shows" desc="Hit-rate well below their BU's pooled L0% — rework formats/hooks." list={poor} kind="poor_l0" />
-      <Block title="High L4+L5% shows" desc="Heavy low-view tail vs BU — review topics / thumbnails / discovery." list={high} kind="high_l45" />
-      <Block title="Frequency / supply gaps" desc="Publishing below their weekly frequency target — raise output." list={supply} kind="supply" />
+      <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+        <div className="text-sm font-semibold text-slate-500 uppercase tracking-wide">Hindi show triage — trailing 7 days</div>
+        <label className="text-xs text-slate-500 flex items-center gap-2">
+          BU
+          <select className="border border-slate-300 rounded-md px-2 py-1 text-sm" value={bu} onChange={(e) => setBu(e.target.value)}>
+            <option value="">All BUs</option>
+            {bus.map((b) => (<option key={b} value={b}>{b}</option>))}
+          </select>
+        </label>
+      </div>
+      <TriageBlock title="Poor L0% shows" desc="Hit-rate well below their BU's pooled L0% — rework formats/hooks." list={poor} kind="poor_l0" defaultOpen />
+      <TriageBlock title="High L4+L5% shows" desc="Heavy low-view tail vs BU — review topics / thumbnails / discovery." list={high} kind="high_l45" />
+      <TriageBlock title="Frequency / supply gaps" desc="Publishing below their weekly frequency target — raise output." list={supply} kind="supply" />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Executive summary — synthesized cross-segment attribution for the day.
+// Explains the overall HDC move via language → BU → discovery, number-heavy.
+// ---------------------------------------------------------------------------
+function buildExecSummary(dayRows) {
+  const n = (x) => num(x);
+  const byKey = (lvl, seg) => dayRows.find((r) => r.level === lvl && r.segment === seg);
+  const total = byKey('TOTAL', 'overall_httmk');
+  const hi = byKey('LANGUAGE', 'hi');
+  if (!total) return null;
+
+  const l0 = n(total.l0) ?? n(total.hdc_count);
+  const l0_7 = n(total.hdc_count_7davg);
+  if (l0 == null || l0_7 == null) return null;
+  const out = [];
+  const delta = Math.round((l0 - l0_7) * 10) / 10;
+  const pct = l0_7 ? Math.round(((l0 - l0_7) / l0_7) * 1000) / 10 : null;
+  const dir = delta < 0 ? 'dropped' : delta > 0 ? 'rose' : 'held';
+  const tone = delta < 0 ? 'bad' : delta > 0 ? 'good' : 'info';
+
+  // ---- key drop math (overall) ----
+  const supply = n(total.supply), supply7 = n(total.supply_7davg);
+  const dau = n(total.dau), dau7 = n(total.dau_7davg);
+  const l0pct = n(total.hdc_rate) ?? n(total.l0_pct), l0pct7 = n(total.l0_pct_7davg);
+  const chg = (cur, base) => (cur != null && base ? `${cur > base ? '+' : ''}${Math.round(((cur - base) / base) * 1000) / 10}%` : null);
+  const math = [];
+  math.push(`HDC L0: ${l0} vs ${l0_7} 7dAvg (${delta > 0 ? '+' : ''}${delta}${pct != null ? `, ${pct}%` : ''})`);
+  if (supply != null && supply7) math.push(`supply ${supply} vs ${supply7} (${chg(supply, supply7)})`);
+  if (dau != null && dau7) math.push(`DAU ${fmtNum(dau)} vs ${fmtNum(dau7)} (${chg(dau, dau7)})`);
+  if (l0pct != null && l0pct7 != null) math.push(`L0% ${l0pct}% vs ${l0pct7}% (${Math.round((l0pct - l0pct7) * 10) / 10}pp)`);
+
+  // headline read: supply/traffic vs conversion
+  // "Adequate" = not the culprit: supply at least near-flat, DAU not materially down (>5%).
+  const supplyOk = supply != null && supply7 && supply >= supply7 * 0.9;
+  const dauOk = dau != null && dau7 && dau >= dau7 * 0.95;
+  const convDown = l0pct != null && l0pct7 != null && l0pct < l0pct7 - 1;
+  let headline;
+  if (delta < 0 && convDown && supplyOk && dauOk) headline = 'HDC fell on a CONVERSION miss — supply and traffic were adequate; content did not convert into L0.';
+  else if (delta < 0 && !supplyOk) headline = 'HDC fell mainly on SUPPLY — fewer launches than the 7-day norm.';
+  else if (delta < 0 && !dauOk) headline = 'HDC fell alongside a DAU shortfall — fewer users to convert.';
+  else if (delta < 0 && convDown) headline = 'HDC fell on weaker conversion — L0 hit-rate below the 7-day norm.';
+  else if (delta < 0) headline = 'HDC fell vs the 7-day norm.';
+  else if (delta > 0) headline = 'HDC rose vs the 7-day norm.';
+  else headline = 'HDC roughly in line with the 7-day norm.';
+
+  out.push({ tone, kind: 'tldr', text: `HDC ${dir} ${Math.abs(delta)}${pct != null ? ` (${pct}%)` : ''} vs 7-day avg. ${headline}` });
+  out.push({ tone: 'info', kind: 'math', text: `Key math — ${math.join(' · ')}.` });
+
+  // ---- language attribution (which language explains the overall drop) ----
+  if (delta < 0) {
+    const langs = dayRows.filter((r) => r.level === 'LANGUAGE' && n(r.hdc_count_7davg) != null && (n(r.l0) ?? n(r.hdc_count)) != null);
+    const langDeltas = langs.map((r) => ({ seg: r.segment, d: (n(r.l0) ?? n(r.hdc_count)) - n(r.hdc_count_7davg), r }))
+      .sort((a, b) => a.d - b.d);
+    const worst = langDeltas[0];
+    if (worst && worst.d < 0) {
+      const shareOfDrop = Math.round((worst.d / delta) * 100);
+      const wr = worst.r;
+      const wsupply = n(wr.supply), wsupply7 = n(wr.supply_7davg);
+      const wl0pct7 = n(wr.l0_pct_7davg), wl0 = n(wr.l0) ?? n(wr.hdc_count);
+      const expected = wl0pct7 != null && wsupply != null ? Math.round((wl0pct7 / 100) * wsupply * 10) / 10 : null;
+      const miss = expected != null && wl0 != null ? Math.round((expected - wl0) * 10) / 10 : null;
+      out.push({ tone: 'bad', kind: 'lang', text: `${LANG_NAMES[worst.seg] || worst.seg} is the main driver: HDC ${wl0} vs ${n(wr.hdc_count_7davg)} 7dAvg (${worst.d > 0 ? '+' : ''}${Math.round(worst.d * 10) / 10}) — explains ${shareOfDrop}% of the overall drop${wsupply != null && wsupply7 ? `; supply ${wsupply} (${chg(wsupply, wsupply7)})` : ''}${expected != null ? `. At its normal ${wl0pct7}% hit-rate it should have made ~${expected} L0 → conversion miss of ~${miss}` : ''}.` });
+    }
+  }
+
+  // ---- BU driver (within Hindi) + mix/dilution issue ----
+  const bus = dayRows.filter((r) => r.level === 'BU' && (n(r.l0) ?? n(r.hdc_count)) != null);
+  if (bus.length) {
+    if (delta < 0) {
+      const buDeltas = bus.filter((r) => n(r.hdc_count_7davg) != null)
+        .map((r) => ({ seg: r.segment, d: (n(r.l0) ?? n(r.hdc_count)) - n(r.hdc_count_7davg), r }))
+        .sort((a, b) => a.d - b.d);
+      const worstBu = buDeltas[0];
+      const hiDelta = hi && n(hi.hdc_count_7davg) != null ? (n(hi.l0) ?? n(hi.hdc_count)) - n(hi.hdc_count_7davg) : null;
+      if (worstBu && worstBu.d < 0) {
+        const shareOfHi = hiDelta && hiDelta < 0 ? Math.round((worstBu.d / hiDelta) * 100) : null;
+        out.push({ tone: 'bad', kind: 'bu', text: `Within Hindi, ${worstBu.seg} is the biggest internal driver: HDC ${n(worstBu.r.l0) ?? n(worstBu.r.hdc_count)} vs ${n(worstBu.r.hdc_count_7davg)} 7dAvg (${worstBu.d > 0 ? '+' : ''}${Math.round(worstBu.d * 10) / 10})${shareOfHi != null ? `, ~${shareOfHi}% of the Hindi drop` : ''} — L0% ${n(worstBu.r.hdc_rate) ?? n(worstBu.r.l0_pct)}%.` });
+      }
+    }
+    // dilution: a BU with big supply share but ~0 HDC and heavy tail
+    const hiSupply = hi ? n(hi.supply) : bus.reduce((a, r) => a + (n(r.supply) || 0), 0);
+    const diluter = bus.filter((r) => (n(r.l0) ?? n(r.hdc_count)) === 0 && n(r.supply) > 0)
+      .sort((a, b) => (n(b.supply) || 0) - (n(a.supply) || 0))[0];
+    if (diluter && hiSupply) {
+      const sharePct = Math.round((n(diluter.supply) / hiSupply) * 100);
+      out.push({ tone: 'warn', kind: 'mix', text: `Mix drag: ${diluter.segment} added ${n(diluter.supply)} launches (${sharePct}% of Hindi supply) but 0 HDC, L4+L5 ${n(diluter.l4l5_pct) ?? '—'}% — diluting the pool with supply that doesn't convert.` });
+    }
+  }
+
+  // ---- discovery / surface ----
+  const discoRow = hi || total;
+  if (discoRow && (discoRow.top_surface_drops || discoRow.peak_drop_hour)) {
+    out.push({ tone: 'info', kind: 'disco', text: `Discovery: ${discoRow.top_surface_drops ? `surfaces down — ${String(discoRow.top_surface_drops).trim()}` : ''}${discoRow.peak_drop_hour ? `${discoRow.top_surface_drops ? '; ' : ''}worst hour ${String(discoRow.peak_drop_hour).trim()}` : ''}.` });
+  }
+
+  return out;
+}
+
+function ExecSummary({ dayRows }) {
+  const findings = buildExecSummary(dayRows);
+  if (!findings || !findings.length) return null;
+  return (
+    <div className="card p-4 mb-5" style={{ background: '#fafafa', borderColor: '#cbd5e1' }}>
+      <div className="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Executive RCA — what moved & why</div>
+      <ul className="space-y-1.5">
+        {findings.map((f, i) => (
+          <li key={i} className="flex gap-2 text-sm text-slate-700">
+            <span className="mt-1.5 shrink-0 rounded-full" style={{ width: 7, height: 7, background: FINDING_DOT[f.tone] }} />
+            <span className={f.kind === 'tldr' ? 'font-medium' : ''}>{f.text}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -339,6 +481,8 @@ export default function RcaTab() {
           </select>
         </label>
       </div>
+
+      <ExecSummary dayRows={dayRows} />
 
       {GROUPS.map((g) => {
         const rows = ordered(g);
