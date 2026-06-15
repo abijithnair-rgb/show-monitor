@@ -242,27 +242,57 @@ lbl_series AS (
     AND (cs.state='live' OR cs.state='expired')
     AND up.is_quality_approved=TRUE
 ),
+-- Canonical HDC population (qid match): PAID users only, ORGANIC only
+-- (notification/sharing/moe stripped at source), from video_play + intraday
+-- (settled-date guard avoids double-counting). Completes come from the SAME
+-- organic watch (≥70% of duration), not a separate android-only table.
+lbl_settled AS (
+  SELECT DISTINCT DATE(`timestamp`,'Asia/Kolkata') AS settled_date
+  FROM content_recommendation.video_play
+  WHERE DATE(`timestamp`,'Asia/Kolkata') BETWEEN start_date AND DATE_ADD(end_date, INTERVAL 1 DAY)
+),
+lbl_paid_users AS (
+  SELECT firebase_uid
+  FROM seekho.users_userprofile
+  WHERE firebase_uid IS NOT NULL AND first_purchased_on IS NOT NULL AND is_deleted = FALSE
+),
+lbl_watch_raw AS (
+  SELECT `timestamp` AS event_ts, firebase_uid AS user_id, CAST(series_id AS INT64) AS series_id, CAST(watchtime AS FLOAT64) AS seconds
+  FROM content_recommendation.video_play
+  WHERE DATE(`timestamp`,'Asia/Kolkata') BETWEEN start_date AND DATE_ADD(end_date, INTERVAL 1 DAY)
+    AND package_name NOT IN ('com.bolo.android','com.seekho.ios','com.seekhoai.android','com.seekhoglobal.ios','com.seekhoglobal.android')
+    AND (source_screen NOT IN ('from_notification','sharing','from_moe_notification') OR source_screen IS NULL)
+  UNION ALL
+  SELECT `timestamp`, firebase_uid, CAST(series_id AS INT64), CAST(MAX(watchtime) AS FLOAT64)
+  FROM content_recommendation.video_play_intraday
+  WHERE DATE(`timestamp`,'Asia/Kolkata') BETWEEN start_date AND DATE_ADD(end_date, INTERVAL 1 DAY)
+    AND DATE(`timestamp`,'Asia/Kolkata') NOT IN (SELECT settled_date FROM lbl_settled)
+    AND package_name NOT IN ('com.bolo.android','com.seekho.ios','com.seekhoai.android','com.seekhoglobal.ios','com.seekhoglobal.android')
+    AND (source_screen NOT IN ('from_notification','sharing','from_moe_notification') OR source_screen IS NULL)
+  GROUP BY `timestamp`, firebase_uid, series_id
+),
+lbl_watch_organic AS (
+  SELECT w.event_ts, w.user_id, w.series_id, w.seconds
+  FROM lbl_watch_raw w
+  INNER JOIN lbl_paid_users p ON CAST(w.user_id AS STRING) = CAST(p.firebase_uid AS STRING)
+),
 lbl_views AS (
   SELECT se.series_id, se.series_title, se.show_id, se.show_name, se.language, se.bu_name, se.publish_date, se.duration_s,
-    CASE WHEN COUNT(DISTINCT CAST(vp.firebase_uid AS STRING))>=1000 THEN ROUND(COUNT(DISTINCT CAST(vp.firebase_uid AS STRING)),-2)
-         ELSE COUNT(DISTINCT CAST(vp.firebase_uid AS STRING)) END AS views_24h,
-    ROUND(SUM(COALESCE(vp.watchtime,0))/3600.0,2) AS watch_hours
+    CASE WHEN COUNT(DISTINCT w.user_id)>=1000 THEN ROUND(COUNT(DISTINCT w.user_id),-2)
+         ELSE COUNT(DISTINCT w.user_id) END AS views_24h,
+    ROUND(SUM(COALESCE(w.seconds,0))/3600.0,2) AS watch_hours
   FROM lbl_series se
-  LEFT JOIN content_recommendation.video_play_combined vp
-    ON SAFE_CAST(vp.series_id AS INT64)=se.series_id AND vp.firebase_uid IS NOT NULL
-   AND vp.timestamp>=TIMESTAMP(start_date) AND vp.timestamp<TIMESTAMP_ADD(TIMESTAMP(end_date),INTERVAL 2 DAY)
-   AND DATETIME(vp.timestamp,'Asia/Kolkata')>=se.publish_ts_ist AND DATETIME(vp.timestamp,'Asia/Kolkata')<se.publish_24h_ts_ist
+  LEFT JOIN lbl_watch_organic w
+    ON w.series_id=se.series_id AND w.user_id IS NOT NULL
+   AND DATETIME(w.event_ts,'Asia/Kolkata')>=se.publish_ts_ist AND DATETIME(w.event_ts,'Asia/Kolkata')<se.publish_24h_ts_ist
   GROUP BY 1,2,3,4,5,6,7,8
 ),
 lbl_watch AS (
-  SELECT se.series_id, CAST(rw.user_id AS STRING) AS user_id, SUM(rw.seconds) AS watch_time
+  SELECT se.series_id, CAST(w.user_id AS STRING) AS user_id, SUM(COALESCE(w.seconds,0)) AS watch_time
   FROM lbl_series se
-  JOIN analytics_content.s_raw_watching_five_second rw ON rw.series_id=se.series_id
-  JOIN content_recommendation.video_play_combined vp
-    ON SAFE_CAST(vp.series_id AS INT64)=se.series_id AND CAST(vp.firebase_uid AS STRING)=CAST(rw.user_id AS STRING)
-   AND vp.timestamp>=TIMESTAMP(start_date) AND vp.timestamp<TIMESTAMP_ADD(TIMESTAMP(end_date),INTERVAL 2 DAY)
-   AND DATETIME(vp.timestamp,'Asia/Kolkata')>=se.publish_ts_ist AND DATETIME(vp.timestamp,'Asia/Kolkata')<se.publish_24h_ts_ist
-  WHERE rw.date_tz BETWEEN start_date AND DATE_ADD(end_date,INTERVAL 1 DAY) AND rw.platform='android'
+  JOIN lbl_watch_organic w
+    ON w.series_id=se.series_id AND w.user_id IS NOT NULL
+   AND DATETIME(w.event_ts,'Asia/Kolkata')>=se.publish_ts_ist AND DATETIME(w.event_ts,'Asia/Kolkata')<se.publish_24h_ts_ist
   GROUP BY 1,2
 ),
 lbl_metrics AS (
