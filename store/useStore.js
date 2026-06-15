@@ -115,6 +115,14 @@ export const useStore = create((set, get) => ({
     set(which === 'rca' ? { sheetRcaUrl: url } : { sheetCombinedUrl: url });
     await get().saveSettings();
   },
+  // Prefer Redash (server-configured); fall back to Google-Sheet links.
+  autoSync: async ({ silent } = {}) => {
+    const s = get();
+    const cfg = await s.checkRemote();
+    if (cfg.combined || cfg.rca) return s.syncFromRedash({ silent });
+    if (s.sheetCombinedUrl || s.sheetRcaUrl) return s.syncFromSheets({ silent });
+  },
+
   // Ask the server which Redash datasets are configured (no keys exposed).
   checkRemote: async () => {
     const cfg = await remoteStatus();

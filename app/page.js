@@ -34,16 +34,32 @@ export default function Page() {
     hydrate();
   }, [hydrate]);
 
-  // After hydration, auto-sync (silent — the Data tab shows any error). Prefer Redash
-  // (server-configured); fall back to Google-Sheet links. Manual upload still works.
+  // After hydration, auto-sync once (silent — the Data tab shows any error).
   useEffect(() => {
     if (!hydrated) return;
-    (async () => {
-      const s = useStore.getState();
-      const cfg = await s.checkRemote();
-      if (cfg.combined || cfg.rca) s.syncFromRedash({ silent: true });
-      else if (s.sheetCombinedUrl || s.sheetRcaUrl) s.syncFromSheets({ silent: true });
-    })();
+    useStore.getState().autoSync({ silent: true });
+  }, [hydrated]);
+
+  // Daily auto-refresh at 7:30am local time (while the app is open). Schedules the
+  // next 7:30, syncs, then reschedules. On-load sync above covers closed-overnight.
+  useEffect(() => {
+    if (!hydrated) return;
+    let timer;
+    const msUntilNext730 = () => {
+      const now = new Date();
+      const next = new Date(now);
+      next.setHours(7, 30, 0, 0);
+      if (next <= now) next.setDate(next.getDate() + 1);
+      return next - now;
+    };
+    const arm = () => {
+      timer = setTimeout(() => {
+        useStore.getState().autoSync({ silent: true });
+        arm(); // reschedule for the following day
+      }, msUntilNext730());
+    };
+    arm();
+    return () => clearTimeout(timer);
   }, [hydrated]);
 
   let content = null;
