@@ -1350,6 +1350,20 @@ watch_raw AS (
   GROUP BY `timestamp`, firebase_uid, series_id
 ),
 
+-- Step 2b: Paid users — excludes P0 (same-day installs) and all non-paying users.
+paid_users AS (
+  SELECT firebase_uid
+  FROM `seekho-c084b.seekho.users_userprofile`
+  WHERE firebase_uid IS NOT NULL AND first_purchased_on IS NOT NULL AND is_deleted = FALSE
+),
+
+-- Step 2c: Organic watch events restricted to PAID users only (canonical HDC population).
+watch_organic AS (
+  SELECT w.event_ts, w.user_id, w.series_id, w.seconds
+  FROM watch_raw w
+  INNER JOIN paid_users p ON CAST(w.user_id AS STRING) = CAST(p.firebase_uid AS STRING)
+),
+
 -- Step 3: BU mapping
 bu_mapping AS (
   SELECT category_id, 'Awareness' AS bu_name FROM UNNEST([71,80,64,67,94,68,6,79,66,2,89,5,52,69,38,17,82,62,92,18,13,54,58,61,55,59,8,57,35,25,29,40,14,43,60,21,27,19,51,53,32,33,91,109,65,97,9,106,78,111,83,75,34,105,76,95,10,108,114,115,116,117,121]) AS category_id
@@ -1405,7 +1419,7 @@ views_24h AS (
     END AS views_24h,
     ROUND(SUM(COALESCE(w.seconds, 0)) / 3600.0, 2) AS watch_hours
   FROM series_eligible se
-  LEFT JOIN watch_raw w
+  LEFT JOIN watch_organic w
     ON w.series_id = se.series_id
    AND w.user_id IS NOT NULL
    AND DATETIME(w.event_ts, 'Asia/Kolkata') >= se.publish_ts_ist
@@ -1413,14 +1427,14 @@ views_24h AS (
   GROUP BY 1,2,3,4,5,6,7,8
 ),
 
--- Step 6: Per-user watch time in first 24h (for completion rate)
+-- Step 6: Per-user watch time in first 24h (for completion rate, paid users only)
 watch_user_24h AS (
   SELECT
     se.series_id,
     w.user_id,
     SUM(COALESCE(w.seconds, 0)) AS watch_time
   FROM series_eligible se
-  JOIN watch_raw w
+  JOIN watch_organic w
     ON w.series_id = se.series_id
    AND w.user_id IS NOT NULL
    AND DATETIME(w.event_ts, 'Asia/Kolkata') >= se.publish_ts_ist
