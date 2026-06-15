@@ -1357,11 +1357,16 @@ paid_users AS (
   WHERE firebase_uid IS NOT NULL AND first_purchased_on IS NOT NULL AND is_deleted = FALSE
 ),
 
--- Step 2c: Organic watch events restricted to PAID users only (canonical HDC population).
+-- Step 2c: Organic watch events with a paid flag. HDC population differs by language:
+--   Hindi (hi)        → PAID users only (canonical Hindi HDC query)
+--   Regional (ta/te/kn/ml) → ALL organic users (canonical regional HDC query)
+-- The language-aware gate is applied in views_24h / watch_user_24h (which know the
+-- series language); here we just tag each watch row as paid or not.
 watch_organic AS (
-  SELECT w.event_ts, w.user_id, w.series_id, w.seconds
+  SELECT w.event_ts, w.user_id, w.series_id, w.seconds,
+    CASE WHEN p.firebase_uid IS NOT NULL THEN 1 ELSE 0 END AS is_paid
   FROM watch_raw w
-  INNER JOIN paid_users p ON CAST(w.user_id AS STRING) = CAST(p.firebase_uid AS STRING)
+  LEFT JOIN paid_users p ON CAST(w.user_id AS STRING) = CAST(p.firebase_uid AS STRING)
 ),
 
 -- Step 3: BU mapping
@@ -1412,12 +1417,13 @@ views_24h AS (
     se.bu_name,
     se.publish_date,
     se.duration_s,
+    -- Eligible viewer: Hindi → paid only; regional → all organic users.
     CASE
-      WHEN COUNT(DISTINCT w.user_id) >= 1000
-        THEN ROUND(COUNT(DISTINCT w.user_id), -2)
-      ELSE COUNT(DISTINCT w.user_id)
+      WHEN COUNT(DISTINCT IF(se.language='hi' AND w.is_paid=0, NULL, w.user_id)) >= 1000
+        THEN ROUND(COUNT(DISTINCT IF(se.language='hi' AND w.is_paid=0, NULL, w.user_id)), -2)
+      ELSE COUNT(DISTINCT IF(se.language='hi' AND w.is_paid=0, NULL, w.user_id))
     END AS views_24h,
-    ROUND(SUM(COALESCE(w.seconds, 0)) / 3600.0, 2) AS watch_hours
+    ROUND(SUM(IF(se.language='hi' AND w.is_paid=0, 0, COALESCE(w.seconds, 0))) / 3600.0, 2) AS watch_hours
   FROM series_eligible se
   LEFT JOIN watch_organic w
     ON w.series_id = se.series_id
@@ -1427,7 +1433,8 @@ views_24h AS (
   GROUP BY 1,2,3,4,5,6,7,8
 ),
 
--- Step 6: Per-user watch time in first 24h (for completion rate, paid users only)
+-- Step 6: Per-user watch time in first 24h (for completion rate). Same language-aware
+-- gate: Hindi → paid users only; regional → all organic users.
 watch_user_24h AS (
   SELECT
     se.series_id,
@@ -1439,6 +1446,7 @@ watch_user_24h AS (
    AND w.user_id IS NOT NULL
    AND DATETIME(w.event_ts, 'Asia/Kolkata') >= se.publish_ts_ist
    AND DATETIME(w.event_ts, 'Asia/Kolkata') <  se.publish_24h_ts_ist
+  WHERE NOT (se.language='hi' AND w.is_paid=0)
   GROUP BY 1, 2
 ),
 

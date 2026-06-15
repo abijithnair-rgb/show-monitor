@@ -271,16 +271,22 @@ lbl_watch_raw AS (
     AND (source_screen NOT IN ('from_notification','sharing','from_moe_notification') OR source_screen IS NULL)
   GROUP BY `timestamp`, firebase_uid, series_id
 ),
+-- Organic watch tagged paid/not. HDC population differs by language:
+--   Hindi (hi)            → PAID users only
+--   Regional (ta/te/kn/ml)→ ALL organic users
+-- The gate is applied below where the series language is known.
 lbl_watch_organic AS (
-  SELECT w.event_ts, w.user_id, w.series_id, w.seconds
+  SELECT w.event_ts, w.user_id, w.series_id, w.seconds,
+    CASE WHEN p.firebase_uid IS NOT NULL THEN 1 ELSE 0 END AS is_paid
   FROM lbl_watch_raw w
-  INNER JOIN lbl_paid_users p ON CAST(w.user_id AS STRING) = CAST(p.firebase_uid AS STRING)
+  LEFT JOIN lbl_paid_users p ON CAST(w.user_id AS STRING) = CAST(p.firebase_uid AS STRING)
 ),
 lbl_views AS (
   SELECT se.series_id, se.series_title, se.show_id, se.show_name, se.language, se.bu_name, se.publish_date, se.duration_s,
-    CASE WHEN COUNT(DISTINCT w.user_id)>=1000 THEN ROUND(COUNT(DISTINCT w.user_id),-2)
-         ELSE COUNT(DISTINCT w.user_id) END AS views_24h,
-    ROUND(SUM(COALESCE(w.seconds,0))/3600.0,2) AS watch_hours
+    CASE WHEN COUNT(DISTINCT IF(se.language='hi' AND w.is_paid=0, NULL, w.user_id))>=1000
+         THEN ROUND(COUNT(DISTINCT IF(se.language='hi' AND w.is_paid=0, NULL, w.user_id)),-2)
+         ELSE COUNT(DISTINCT IF(se.language='hi' AND w.is_paid=0, NULL, w.user_id)) END AS views_24h,
+    ROUND(SUM(IF(se.language='hi' AND w.is_paid=0, 0, COALESCE(w.seconds,0)))/3600.0,2) AS watch_hours
   FROM lbl_series se
   LEFT JOIN lbl_watch_organic w
     ON w.series_id=se.series_id AND w.user_id IS NOT NULL
@@ -293,6 +299,7 @@ lbl_watch AS (
   JOIN lbl_watch_organic w
     ON w.series_id=se.series_id AND w.user_id IS NOT NULL
    AND DATETIME(w.event_ts,'Asia/Kolkata')>=se.publish_ts_ist AND DATETIME(w.event_ts,'Asia/Kolkata')<se.publish_24h_ts_ist
+  WHERE NOT (se.language='hi' AND w.is_paid=0)
   GROUP BY 1,2
 ),
 lbl_metrics AS (
@@ -304,7 +311,8 @@ lbl_p AS (
   SELECT *,
     PERCENTILE_CONT(views_24h,0.90) OVER (PARTITION BY publish_date,language) AS p90,
     PERCENTILE_CONT(views_24h,0.50) OVER (PARTITION BY publish_date,language) AS p50,
-    PERCENTILE_CONT(views_24h,0.25) OVER (PARTITION BY publish_date,language) AS p25
+    PERCENTILE_CONT(views_24h,0.25) OVER (PARTITION BY publish_date,language) AS p25,
+    PERCENTILE_CONT(views_24h,0.75) OVER (PARTITION BY publish_date,language) AS p75
   FROM lbl_metrics
 ),
 labeled AS (
@@ -322,7 +330,7 @@ labeled2 AS (
     CASE
       WHEN view_thr=1 AND cr_thr=1 THEN 'L0'
       WHEN view_thr=1 AND cr_thr=0 THEN 'L1'
-      WHEN cr_thr=1 AND views_24h>1000 THEN 'L2'
+      WHEN cr_thr=1 AND views_24h > IF(language='hi', 1000, p75) THEN 'L2'
       WHEN views_24h>p50 THEN 'L3'
       WHEN views_24h>=p25 AND views_24h<=p50 THEN 'L4'
       WHEN views_24h<p25 THEN 'L5'
