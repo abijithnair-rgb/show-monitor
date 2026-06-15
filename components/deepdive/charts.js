@@ -44,11 +44,19 @@ export function TrajectoryChart({ ev, evalRows }) {
 }
 
 export function RetentionChart({ fs }) {
+  // Convert step-wise relative retention → cumulative (% of original starters):
+  // hook stays, mid = hook×mid, end = hook×mid×end. Matches the guardrail basis.
+  const h = num(fs.show_avg_hook_retention_pct);
+  const m = num(fs.show_avg_mid_retention_pct);
+  const e = num(fs.show_avg_end_retention_pct);
+  const cumMid = h != null && m != null ? (h * m) / 100 : m;
+  const cumEnd = h != null && m != null && e != null ? (h * m * e) / 10000 : e;
+  const r1 = (x) => (x == null ? null : Math.round(x * 10) / 10);
   return (
     <Bar
       data={{
         labels: ['Hook', 'Mid', 'End'],
-        datasets: [{ data: [num(fs.show_avg_hook_retention_pct), num(fs.show_avg_mid_retention_pct), num(fs.show_avg_end_retention_pct)], backgroundColor: ['#F4A261', '#D97706', '#1D4ED8'] }],
+        datasets: [{ data: [r1(h), r1(cumMid), r1(cumEnd)], backgroundColor: ['#F4A261', '#D97706', '#1D4ED8'] }],
       }}
       options={{ plugins: { legend: { display: false } }, scales: { y: { max: 100, ticks: { callback: (v) => v + '%' } } }, maintainAspectRatio: false }}
     />

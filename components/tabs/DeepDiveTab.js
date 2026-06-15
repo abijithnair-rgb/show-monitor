@@ -116,7 +116,7 @@ function DeepBody({ s, data }) {
                 <div style={{ position: 'relative', height: 200 }}>
                   <RetentionChart fs={fs} />
                 </div>
-                <div className="hint text-center mt-1">H123 retention checkpoints (Hook / Mid / End)</div>
+                <div className="hint text-center mt-1">Cumulative retention — % of starters still watching (Hook @30s / Mid @50% / End @70%)</div>
               </div>
               <div>
                 <div style={{ position: 'relative', height: 200 }}>
