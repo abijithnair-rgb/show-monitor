@@ -466,7 +466,10 @@ corr_block AS (
 -- ===========================================================================
 seg_unified AS (
   SELECT
-    COALESCE(a.date_, c.date_) AS report_date,
+    -- report_date = the RUN day (D-0, the morning this row represents). DAU is the
+    -- underlying D-1 day; HDC/labels are D-2 (carried in hdc_report_date). So a row
+    -- run on the 15th has report_date=15, DAU for the 14th, HDC for the 13th.
+    DATE_ADD(COALESCE(a.date_, c.date_), INTERVAL 1 DAY) AS report_date,
     COALESCE(a.level, c.level) AS level,
     COALESCE(a.segment, c.segment) AS segment,
     l.date_ AS hdc_report_date,
@@ -585,7 +588,7 @@ seg_unified AS (
 -- ===========================================================================
 show_unified AS (
   SELECT
-    end_date AS report_date,
+    DATE_ADD(end_date, INTERVAL 1 DAY) AS report_date,   -- run day (D-0)
     'SHOW' AS level,
     r.bu_name AS segment,
     hdc_end_date AS hdc_report_date,
@@ -627,7 +630,7 @@ show_unified AS (
 )
 
 SELECT * FROM seg_unified
-WHERE report_date BETWEEN DATE_SUB(end_date, INTERVAL report_window_days DAY) AND end_date
+WHERE report_date BETWEEN DATE_SUB(end_date, INTERVAL report_window_days DAY) AND DATE_ADD(end_date, INTERVAL 1 DAY)
 UNION ALL
 SELECT * FROM show_unified
 ORDER BY
