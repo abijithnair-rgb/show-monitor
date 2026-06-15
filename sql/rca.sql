@@ -42,13 +42,17 @@ series_dim AS (
 vp_base AS (
   SELECT
     DATE(vp.timestamp,'Asia/Kolkata') AS date_,
+    vp.timestamp AS event_ts,
     EXTRACT(HOUR FROM DATETIME(vp.timestamp,'Asia/Kolkata')) AS hour_ist,
     vp.user_id, sd.language, sd.bu_name, vp.watchtime_max,
     COALESCE(vp.source_screen,'unknown') AS source_screen,
     COALESCE(vp.source_section,'unknown') AS source_section,
+    -- Source map mirrors the canonical DAU-source query: notification → push,
+    -- sharing → whatsapp, moe_notification → moe, everything else → organic.
     CASE
       WHEN vp.source_screen='from_notification' THEN 'push'
       WHEN vp.source_screen='from_moe_notification' THEN 'moe'
+      WHEN vp.source_screen='sharing' THEN 'whatsapp'
       WHEN LOWER(COALESCE(vp.source_screen,'')) LIKE '%whatsapp%' THEN 'whatsapp'
       WHEN LOWER(COALESCE(vp.source_section,'')) LIKE '%whatsapp%' THEN 'whatsapp'
       ELSE 'organic'
@@ -61,14 +65,16 @@ vp_base AS (
     AND sd.language IN ('hi','ta','te','ml','kn')
 ),
 seg_play AS (
-  SELECT 'LANGUAGE' AS level, language AS segment, date_, hour_ist, user_id, watchtime_max, source_type, source_screen, source_section, days_since_payment FROM vp_base
-  UNION ALL SELECT 'TOTAL','overall_httmk', date_, hour_ist, user_id, watchtime_max, source_type, source_screen, source_section, days_since_payment FROM vp_base
-  UNION ALL SELECT 'BU', bu_name, date_, hour_ist, user_id, watchtime_max, source_type, source_screen, source_section, days_since_payment FROM vp_base WHERE language='hi' AND bu_name<>'Other'
+  SELECT 'LANGUAGE' AS level, language AS segment, date_, event_ts, hour_ist, user_id, watchtime_max, source_type, source_screen, source_section, days_since_payment FROM vp_base
+  UNION ALL SELECT 'TOTAL','overall_httmk', date_, event_ts, hour_ist, user_id, watchtime_max, source_type, source_screen, source_section, days_since_payment FROM vp_base
+  UNION ALL SELECT 'BU', bu_name, date_, event_ts, hour_ist, user_id, watchtime_max, source_type, source_screen, source_section, days_since_payment FROM vp_base WHERE language='hi' AND bu_name<>'Other'
 ),
 user_day_seg AS (
   SELECT level, segment, date_, user_id,
     SUM(watchtime_max) AS total_watchtime, MAX(watchtime_max) AS max_watchtime,
-    ARRAY_AGG(source_type ORDER BY watchtime_max DESC LIMIT 1)[OFFSET(0)] AS source_type,
+    -- FIRST-TOUCH source: the source of the user's earliest qualifying (>=5s) play
+    -- that day — i.e. where they actually entered from — not the highest-watchtime one.
+    ARRAY_AGG(IF(watchtime_max>=5, source_type, NULL) IGNORE NULLS ORDER BY event_ts ASC LIMIT 1)[SAFE_OFFSET(0)] AS source_type,
     MIN(days_since_payment) AS days_since_payment
   FROM seg_play GROUP BY 1,2,3,4
 ),
