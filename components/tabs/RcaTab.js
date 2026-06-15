@@ -57,6 +57,46 @@ function rcaFindings(r) {
   const dauPct = n(r.dau_7davg_pct);
   const hv = String(r.hdc_verdict || '').toUpperCase();
 
+  // --- DAU drivers (computed up front so the HDC view-miss cause can use them) ---
+  const totalDrop = n(r.dau) != null && n(r.dau_dod) != null ? n(r.dau_dod) - n(r.dau) : null; // +ve = users lost DoD
+  const share = (x) => (totalDrop && totalDrop > 0 ? ` (${Math.round((Math.abs(x) / totalDrop) * 100)}% of the fall)` : '');
+  const biggestDrop = (defs) => {
+    let best = null;
+    defs.forEach(([label, cur, dod]) => {
+      const c = n(cur), d = n(dod);
+      if (c == null || d == null) return;
+      const delta = c - d;          // negative = lost users
+      if (delta < 0 && (!best || delta < best.delta)) best = { label, delta, cur: c, dod: d };
+    });
+    return best;
+  };
+  // steepest %-decline cohort (with a meaningful base) → "which cohort is underperforming"
+  const worstCohortPct = (defs) => {
+    let best = null;
+    defs.forEach(([label, cur, dod]) => {
+      const c = n(cur), d = n(dod);
+      if (c == null || d == null || d < 500) return;     // ignore tiny bases
+      const pct = ((c - d) / d) * 100;
+      if (pct < -3 && (!best || pct < best.pct)) best = { label, pct: Math.round(pct * 10) / 10, cur: c, dod: d };
+    });
+    return best;
+  };
+  const SRC = [
+    ['organic', r.dau_organic, r.dau_organic_dod], ['push', r.dau_push, r.dau_push_dod],
+    ['MoEngage', r.dau_moe, r.dau_moe_dod], ['WhatsApp', r.dau_whatsapp, r.dau_whatsapp_dod],
+  ];
+  const COHORT = [
+    ['D0', r.dau_d0, r.dau_d0_dod], ['D1-D3', r.dau_d1_d3, r.dau_d1_d3_dod], ['D4-D7', r.dau_d4_d7, r.dau_d4_d7_dod],
+    ['D8-D14', r.dau_d8_d14, r.dau_d8_d14_dod], ['D15-D30', r.dau_d15_d30, r.dau_d15_d30_dod], ['D30+', r.dau_d30_plus, r.dau_d30_plus_dod],
+  ];
+  const UT = [
+    ['new', r.dau_new, r.dau_new_dod], ['retained', r.dau_retained, r.dau_retained_dod], ['resurrected', r.dau_resurrected, r.dau_resurrected_dod],
+  ];
+  const srcDrop = biggestDrop(SRC);
+  const cohortDrop = biggestDrop(COHORT);
+  const utDrop = biggestDrop(UT);
+  const worstCohort = worstCohortPct(COHORT);
+
   // --- HDC (the lead) ---
   const contentMiss = mc + mb;   // CR failures (incl. both) = content problem
   const viewMiss = mv;           // reach failures = distribution problem
@@ -67,7 +107,18 @@ function rcaFindings(r) {
     if (supply != null && supply7 != null && supply < supply7 * 0.85) {
       out.push({ tone: 'warn', text: `Root cause: SUPPLY — fewer launches (${supply} eligible vs 7dAvg ${supply7}).` });
     } else if (viewMiss > contentMiss && viewMiss > 0) {
-      out.push({ tone: 'bad', text: `Root cause: DISTRIBUTION — mostly view misses (${viewMiss} view-only vs ${contentMiss} CR). Content cleared its target; reach/recommendations are the gap.` });
+      out.push({ tone: 'bad', text: `Root cause: DISTRIBUTION — ${viewMiss} of the misses were view-only (vs ${contentMiss} CR). Content cleared its completion target; the new videos just didn’t get enough viewers in 24h.` });
+      // WHY the views were missed → tie directly to where users didn't come from today.
+      if (srcDrop) {
+        const why = (srcDrop.label === 'push' || srcDrop.label === 'MoEngage')
+          ? 'a notification-delivery gap (check if a campaign didn’t fire) — fewer users were pulled in to see the new content'
+          : srcDrop.label === 'organic' ? 'fewer users returned on their own to discover the new content' : 'fewer sessions from this channel to surface the new content';
+        out.push({ tone: 'bad', text: `Why views were missed: ${srcDrop.label} brought ${fmtNum(Math.abs(srcDrop.delta))} fewer users than yesterday${share(srcDrop.delta)} (${fmtNum(srcDrop.dod)}→${fmtNum(srcDrop.cur)}) — ${why}.` });
+      }
+      if (worstCohort) {
+        out.push({ tone: 'bad', text: `Cohort underperforming: the ${worstCohort.label} post-payment cohort fell ${worstCohort.pct}% DoD (${fmtNum(worstCohort.dod)}→${fmtNum(worstCohort.cur)}) — ${['D0','D1-D3','D4-D7'].includes(worstCohort.label) ? 'a freshly-acquired set not reaching the new content' : 'tenured users disengaging'}, so reach for the new launches thinned out there.` });
+      }
+      if (!srcDrop && !worstCohort) out.push({ tone: 'info', text: 'No single source/cohort drop stands out — likely a recommendations/ranking issue surfacing the new content rather than a traffic shortfall.' });
     } else if (contentMiss > viewMiss && contentMiss > 0) {
       out.push({ tone: 'bad', text: `Root cause: CONTENT — mostly CR misses (${mc} cr-only + ${mb} both vs ${viewMiss} view-only) → show managers: hook / pacing / target.` });
     } else if (viewMiss + contentMiss > 0) {
@@ -96,33 +147,8 @@ function rcaFindings(r) {
 
   // --- Paid DAU ---
   const dv = String(r.dau_verdict || '').toUpperCase();
-  // biggest DoD drop within a dimension → tells you exactly where the movement came from
-  const biggestDrop = (defs) => {
-    let best = null;
-    defs.forEach(([label, cur, dod]) => {
-      const c = n(cur), d = n(dod);
-      if (c == null || d == null) return;
-      const delta = c - d;          // negative = lost users
-      if (delta < 0 && (!best || delta < best.delta)) best = { label, delta, cur: c, dod: d };
-    });
-    return best;
-  };
-  const srcDrop = biggestDrop([
-    ['organic', r.dau_organic, r.dau_organic_dod], ['push', r.dau_push, r.dau_push_dod],
-    ['MoEngage', r.dau_moe, r.dau_moe_dod], ['WhatsApp', r.dau_whatsapp, r.dau_whatsapp_dod],
-  ]);
-  const cohortDrop = biggestDrop([
-    ['D0', r.dau_d0, r.dau_d0_dod], ['D1-D3', r.dau_d1_d3, r.dau_d1_d3_dod], ['D4-D7', r.dau_d4_d7, r.dau_d4_d7_dod],
-    ['D8-D14', r.dau_d8_d14, r.dau_d8_d14_dod], ['D15-D30', r.dau_d15_d30, r.dau_d15_d30_dod], ['D30+', r.dau_d30_plus, r.dau_d30_plus_dod],
-  ]);
-  const utDrop = biggestDrop([
-    ['new', r.dau_new, r.dau_new_dod], ['retained', r.dau_retained, r.dau_retained_dod], ['resurrected', r.dau_resurrected, r.dau_resurrected_dod],
-  ]);
-
   if (dv === 'REAL_DROP' || dv === 'SOFT_DROP') {
     const tone = dv === 'REAL_DROP' ? 'bad' : 'warn';
-    const totalDrop = n(r.dau) != null && n(r.dau_dod) != null ? n(r.dau_dod) - n(r.dau) : null; // +ve = users lost DoD
-    const share = (x) => (totalDrop && totalDrop > 0 ? ` (${Math.round((Math.abs(x) / totalDrop) * 100)}% of the fall)` : '');
     const head = dv === 'REAL_DROP'
       ? `Paid DAU fell ${dauPct}% vs 7dAvg${totalDrop ? `, ${fmtNum(totalDrop)} fewer users than yesterday` : ''} (down on all 3 baselines — a real drop, not noise).`
       : `Paid DAU dipped ${dauPct}% vs 7dAvg but held on DoD/SDLW — likely weekday noise, watch don't act.`;
