@@ -4,6 +4,7 @@ import { buildModel } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
 import CombinedUploadCard from '@/components/CombinedUploadCard';
 import RcaUploadCard from '@/components/RcaUploadCard';
+import SheetSyncCard from '@/components/SheetSyncCard';
 
 export default function DataTab() {
   const evalRows = useStore((s) => s.evalRows);
@@ -56,6 +57,7 @@ export default function DataTab() {
       </p>
       {joinNote}
       {hdcNote}
+      <SheetSyncCard />
       <CombinedUploadCard />
       <div className="mt-4">
         <RcaUploadCard />

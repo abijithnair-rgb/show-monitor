@@ -1,12 +1,18 @@
 import { create } from 'zustand';
 import { idbSet, idbGet, idbDel } from '@/lib/idb';
 import { sampleData } from '@/lib/sample';
+import { fetchSheets, fetchRemote, remoteStatus } from '@/lib/remote';
 
 // Global app state (replaces the original mutable `state` object).
 export const useStore = create((set, get) => ({
   evalRows: null, fatRows: null, hdcRows: null, snapRows: null, tsRows: null, metaRows: null, rcaRows: null,
   evalMeta: null, fatMeta: null, hdcMeta: null, snapMeta: null, tsMeta: null, metaMeta: null, rcaMeta: null,
   hydrated: false,
+
+  // Auto-sync: Redash proxy (keys server-side) is primary; Google-Sheet links optional.
+  sheetCombinedUrl: '', sheetRcaUrl: '',
+  remoteConfigured: { combined: false, rca: false },
+  lastSyncAt: null, syncing: false, syncError: null,
 
   tab: 'data',
   filters: { language: '', category: '', bu: '', status: '', action: '', agreement: '' },
@@ -55,8 +61,14 @@ export const useStore = create((set, get) => ({
         sn = await idbGet('snap'),
         ts = await idbGet('ts'),
         mt = await idbGet('meta'),
-        rc = await idbGet('rca');
+        rc = await idbGet('rca'),
+        st = await idbGet('settings');
       const patch = { hydrated: true };
+      if (st) {
+        patch.sheetCombinedUrl = st.sheetCombinedUrl || '';
+        patch.sheetRcaUrl = st.sheetRcaUrl || '';
+        patch.lastSyncAt = st.lastSyncAt || null;
+      }
       if (e && e.rows) { patch.evalRows = e.rows; patch.evalMeta = e.meta; }
       if (f && f.rows) { patch.fatRows = f.rows; patch.fatMeta = f.meta; }
       if (hd && hd.rows) { patch.hdcRows = hd.rows; patch.hdcMeta = hd.meta; }
@@ -92,6 +104,63 @@ export const useStore = create((set, get) => ({
     if (showmeta && showmeta.length) { patch.metaRows = showmeta; patch.metaMeta = meta.showmeta; }
     set(patch);
     await get().persist();
+  },
+
+  // ---- Google-Sheet auto-sync ----
+  saveSettings: async () => {
+    const s = get();
+    await idbSet('settings', { sheetCombinedUrl: s.sheetCombinedUrl, sheetRcaUrl: s.sheetRcaUrl, lastSyncAt: s.lastSyncAt });
+  },
+  setSheetUrl: async (which, url) => {
+    set(which === 'rca' ? { sheetRcaUrl: url } : { sheetCombinedUrl: url });
+    await get().saveSettings();
+  },
+  // Ask the server which Redash datasets are configured (no keys exposed).
+  checkRemote: async () => {
+    const cfg = await remoteStatus();
+    set({ remoteConfigured: cfg });
+    return cfg;
+  },
+
+  // Pull combined + RCA from Redash via the server proxy and load them.
+  syncFromRedash: async ({ silent } = {}) => {
+    if (get().syncing) return;
+    set({ syncing: true, syncError: null });
+    try {
+      const { combined, rca, errors } = await fetchRemote();
+      if (combined) await get().setCombined(combined);
+      if (rca) await get().setUpload('rca', rca.rows, rca.meta);
+      const now = new Date().toISOString();
+      // Stamp lastSync only if at least one dataset loaded; surface partial errors.
+      const patch = { syncing: false, syncError: errors && errors.length ? errors.join(' · ') : null };
+      if (combined || rca) patch.lastSyncAt = now;
+      set(patch);
+      await get().saveSettings();
+      if (errors && errors.length && !silent && !(combined || rca)) throw new Error(errors.join(' · '));
+    } catch (err) {
+      set({ syncing: false, syncError: err.message || 'Redash sync failed.' });
+      if (!silent) throw err;
+    }
+  },
+
+  // Pull both published-CSV links and load them through the normal parse path.
+  // `silent` avoids surfacing errors during the automatic on-load sync.
+  syncFromSheets: async ({ silent } = {}) => {
+    const s = get();
+    if (!s.sheetCombinedUrl && !s.sheetRcaUrl) return;
+    if (s.syncing) return;
+    set({ syncing: true, syncError: null });
+    try {
+      const { combined, rca } = await fetchSheets({ combinedUrl: s.sheetCombinedUrl, rcaUrl: s.sheetRcaUrl });
+      if (combined) await get().setCombined(combined);
+      if (rca) await get().setUpload('rca', rca.rows, rca.meta);
+      const now = new Date().toISOString();
+      set({ lastSyncAt: now, syncing: false });
+      await get().saveSettings();
+    } catch (err) {
+      set({ syncing: false, syncError: err.message || 'Sync failed.' });
+      if (!silent) throw err;
+    }
   },
 
   loadSample: async () => {

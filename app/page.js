@@ -34,6 +34,18 @@ export default function Page() {
     hydrate();
   }, [hydrate]);
 
+  // After hydration, auto-sync (silent — the Data tab shows any error). Prefer Redash
+  // (server-configured); fall back to Google-Sheet links. Manual upload still works.
+  useEffect(() => {
+    if (!hydrated) return;
+    (async () => {
+      const s = useStore.getState();
+      const cfg = await s.checkRemote();
+      if (cfg.combined || cfg.rca) s.syncFromRedash({ silent: true });
+      else if (s.sheetCombinedUrl || s.sheetRcaUrl) s.syncFromSheets({ silent: true });
+    })();
+  }, [hydrated]);
+
   let content = null;
   if (!hydrated) {
     content = <div className="text-sm text-slate-400 mt-10 text-center">Loading…</div>;
