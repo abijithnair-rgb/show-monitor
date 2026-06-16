@@ -1700,23 +1700,33 @@ WHERE cs.language IN ('hi','ta','te','ml','kn')
 
 UNION ALL
 SELECT 'audience' AS dataset, TO_JSON_STRING(t) AS row_json FROM (
--- Per-show DAILY audience by acquisition source, last 30 days (D-1 .. D-30 IST).
--- Powers the Deep Dive "Daily audience by source" chart. Each row = one
--- (show, day, source) with view count (play events) and unique viewers.
--- Source taxonomy mirrors the Daily RCA: push=from_notification,
--- moe=from_moe_notification, whatsapp=sharing/anything whatsapp, else organic.
+-- Per-show DAILY audience by IN-APP LAUNCH SURFACE, last 30 days (D-1 .. D-30 IST).
+-- Grain: cs.show_id (parent program). "view" = a 5-second-qualified play event
+-- from video_play_combined (the only table carrying source_screen). Note:
+-- video_play_combined is already a qualified-play table, so watchtime>=5 ~ watchtime>0.
+-- surface = where in the app the play started (NOT an acquisition channel).
 WITH aud_plays AS (
   SELECT
     cs.show_id,
     DATE(p.timestamp, 'Asia/Kolkata') AS date_,
     CASE
-      WHEN p.source_screen = 'from_notification'     THEN 'push'
-      WHEN p.source_screen = 'from_moe_notification' THEN 'moe'
-      WHEN p.source_screen = 'sharing'               THEN 'whatsapp'
-      WHEN LOWER(COALESCE(p.source_screen, ''))  LIKE '%whatsapp%' THEN 'whatsapp'
-      WHEN LOWER(COALESCE(p.source_section, '')) LIKE '%whatsapp%' THEN 'whatsapp'
-      ELSE 'organic'
-    END AS source_type,
+      WHEN p.source_screen = 'from_notification'        THEN 'push'
+      WHEN p.source_screen = 'sharing'                  THEN 'shared'        -- in-app share; channel unknown
+      WHEN CONTAINS_SUBSTR(p.source_screen, 'search')   THEN 'search'
+      WHEN STARTS_WITH(p.source_screen, 'category_')    THEN 'category'
+      WHEN p.source_screen = 'show'                     THEN 'show_page'
+      WHEN STARTS_WITH(p.source_screen, 'video_player')
+        OR p.source_screen = 'video_next_swipe'         THEN 'player_autoplay'
+      WHEN p.source_screen IN ('home','home_all','home_home')
+        OR STARTS_WITH(p.source_screen, 'home_tab')     THEN 'home'
+      WHEN STARTS_WITH(p.source_screen, 'library')      THEN 'library'
+      WHEN p.source_screen = 'learning_journey'         THEN 'learning_journey'
+      WHEN STARTS_WITH(p.source_screen, 'new_n_hot')
+        OR STARTS_WITH(p.source_screen, 'new_and_hot')  THEN 'new_n_hot'
+      WHEN p.source_screen = 'ai_chat'                  THEN 'ai_chat'
+      WHEN p.source_screen IS NULL                      THEN 'unknown'
+      ELSE 'other'
+    END AS surface,
     p.firebase_uid
   FROM `seekho-c084b.content_recommendation.video_play_combined` p
   JOIN `seekho-c084b.seekho.courses_series` cs
@@ -1724,7 +1734,7 @@ WITH aud_plays AS (
   WHERE DATE(p.timestamp, 'Asia/Kolkata')
         BETWEEN DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 30 DAY)
             AND DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 1 DAY)
-    AND p.watchtime IS NOT NULL AND p.watchtime > 0
+    AND p.watchtime IS NOT NULL AND p.watchtime >= 5        -- 5-second qualified view
     AND p.package_name IN (
       'com.seekho.android', 'com.seekho.ios',
       'com.nerchuko.android', 'com.arivu.android',
@@ -1736,12 +1746,12 @@ WITH aud_plays AS (
 SELECT
   show_id,
   CAST(date_ AS STRING)        AS date_,
-  source_type,
+  surface,
   COUNT(*)                     AS views,
   COUNT(DISTINCT firebase_uid) AS users
 FROM aud_plays
 GROUP BY 1, 2, 3
-ORDER BY show_id, date_, source_type
+ORDER BY show_id, date_, surface
 ) t
 
 ORDER BY dataset

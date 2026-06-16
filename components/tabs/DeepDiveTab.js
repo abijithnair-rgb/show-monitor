@@ -145,7 +145,7 @@ function AudienceCard({ aud }) {
   return (
     <div className="card p-4 mb-4">
       <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-        <div className="font-semibold">Daily audience by source — where viewers came from (last 30 days)</div>
+        <div className="font-semibold">Daily audience by surface — where in the app plays started (last 30 days)</div>
         <div className="inline-flex rounded-md border border-slate-300 overflow-hidden text-xs">
           {[['views', 'Views'], ['users', 'Unique viewers']].map(([k, label]) => (
             <button
@@ -164,7 +164,7 @@ function AudienceCard({ aud }) {
             <AudienceSourceChart aud={aud} metric={metric} />
           </div>
           <div className="hint mt-1">
-            {metric === 'views' ? 'Daily video-play count' : 'Daily unique viewers'} per acquisition source — Organic, Push, MoEngage, WhatsApp. Tracks how each channel feeds this show day to day.
+            {metric === 'views' ? 'Daily 5-second-qualified plays' : 'Daily unique viewers'} by in-app launch surface (Home, Player autoplay, Search, Category, Push, …). Surface = where in the app the play started, not the acquisition channel.
           </div>
         </>
       ) : (

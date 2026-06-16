@@ -14,7 +14,7 @@ import {
 } from 'chart.js';
 import { num, pickv } from '@/lib/format';
 import { globalBars } from '@/lib/metrics';
-import { AUDIENCE_SOURCES } from '@/lib/model';
+import { AUDIENCE_SURFACE_STYLE } from '@/lib/model';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Tooltip, Legend, Filler);
 
@@ -64,34 +64,36 @@ export function RetentionChart({ fs }) {
   );
 }
 
-// Daily audience by acquisition source — one line per source over ~30 days.
-// metric = 'views' (play events) or 'users' (unique viewers).
-const AUD_STYLE = {
-  organic:  { label: 'Organic',  color: '#2A9D8F' },
-  push:     { label: 'Push',     color: '#1D4ED8' },
-  moe:      { label: 'MoEngage', color: '#7C3AED' },
-  whatsapp: { label: 'WhatsApp', color: '#F4A261' },
-};
+// Daily audience by in-app launch surface — one line per surface over ~30 days.
+// metric = 'views' (5s-qualified plays) or 'users' (unique viewers).
+const AUD_FALLBACK_COLORS = ['#64748B', '#A855F7', '#0D9488', '#EA580C', '#65A30D', '#BE185D', '#0369A1'];
 export function AudienceSourceChart({ aud, metric = 'views' }) {
   const series = aud[metric] || aud.views;
-  // Drop sources with no activity across the whole window to keep the chart clean.
-  const active = AUDIENCE_SOURCES.filter((s) => (series[s] || []).some((v) => v > 0));
+  const all = aud.surfaces || [];
+  // Drop surfaces with no activity across the whole window to keep the chart clean.
+  const active = all.filter((s) => (series[s] || []).some((v) => v > 0));
+  const list = active.length ? active : all;
   const shortDate = (d) => { const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(d); return m ? `${m[2]}/${m[1]}` : d; };
+  let fb = 0;
   return (
     <Line
       data={{
         labels: aud.dates.map(shortDate),
-        datasets: (active.length ? active : AUDIENCE_SOURCES).map((s) => ({
-          label: AUD_STYLE[s].label,
-          data: series[s],
-          borderColor: AUD_STYLE[s].color,
-          backgroundColor: AUD_STYLE[s].color,
-          tension: 0.3,
-          pointRadius: 0,
-          pointHoverRadius: 3,
-          borderWidth: 2,
-          spanGaps: true,
-        })),
+        datasets: list.map((s) => {
+          const st = AUDIENCE_SURFACE_STYLE[s];
+          const color = st ? st.color : AUD_FALLBACK_COLORS[fb++ % AUD_FALLBACK_COLORS.length];
+          return {
+            label: st ? st.label : s,
+            data: series[s],
+            borderColor: color,
+            backgroundColor: color,
+            tension: 0.3,
+            pointRadius: 0,
+            pointHoverRadius: 3,
+            borderWidth: 2,
+            spanGaps: true,
+          };
+        }),
       }}
       options={{
         interaction: { mode: 'index', intersect: false },
