@@ -3,8 +3,10 @@ import { useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { fmtDate, timeAgo } from '@/lib/format';
 import {
-  METRIC_OPTIONS, metricLabel, targetOptions, reviewDue, todayStr,
+  METRIC_OPTIONS, metricLabel, reviewDue, todayStr,
   evalVerdict, VERDICT_META, progressLine, sincePickupParts,
+  srTargetOptions, LABEL_BANDS, labelDefaultDir, makeLabelTarget, impliedTarget,
+  targetText,
 } from '@/lib/ownership';
 
 // Hoisted (stable identity so inputs don't remount on keystroke).
@@ -59,11 +61,18 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false 
 
   const [nameDraft, setNameDraft] = useState('');
   const [metric, setMetric] = useState('success_rate');
-  const [targetId, setTargetId] = useState('');
+  const [srTargetId, setSrTargetId] = useState('');
+  const [labelBand, setLabelBand] = useState('L0');
+  const [labelDir, setLabelDir] = useState('inc');
+  const [labelPct, setLabelPct] = useState(30);
   const [actionDate, setActionDate] = useState(claim?.action_date || '');
   const [reviewDate, setReviewDate] = useState(claim?.review_date || '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+
+  // When the metric or label band changes, reset the dependent target inputs.
+  function onMetricChange(m) { setMetric(m); setSrTargetId(''); }
+  function onBandChange(b) { setLabelBand(b); setLabelDir(labelDefaultDir(b)); }
 
   const isOwner = claim && userName && claim.by === userName;
   const verdict = claim ? evalVerdict(claim, snapshotNow) : null;
@@ -75,16 +84,28 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false 
     try { await fn(); } catch (e) { setErr(e.message || 'Action failed.'); } finally { setBusy(false); }
   }
 
+  // Build the target object from the metric-specific inputs.
+  function buildTarget() {
+    if (metric === 'success_rate') {
+      const opts = srTargetOptions();
+      return (opts.find((o) => o.id === srTargetId) || null)?.target || null;
+    }
+    if (metric === 'label') {
+      if (!(Number(labelPct) > 0)) return null;
+      return makeLabelTarget(labelBand, labelDir, labelPct);
+    }
+    return impliedTarget(metric); // hook/pace/ending fix, stop, promote
+  }
+
   function confirmPickup() {
     const name = (userName || nameDraft).trim();
     if (!name) { setErr('Enter your name first so the team knows who picked this up.'); return; }
-    const opts = targetOptions(metric);
-    const chosen = opts.find((o) => o.id === targetId) || opts[0];
-    if (!chosen) { setErr('Pick a target for this experiment.'); return; }
+    const target = buildTarget();
+    if (!target) { setErr(metric === 'success_rate' ? 'Choose a success-rate target.' : 'Set a valid target amount.'); return; }
     if (!userName) setUserName(name);
     run(async () => {
       await claimShow(s.id, name, snapshotNow, {
-        metric, target: chosen.target,
+        metric, target,
         action_date: actionDate || null, review_date: reviewDate || null,
       });
       onClose?.();
@@ -133,23 +154,63 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false 
                   className="border border-slate-300 rounded-md px-2 py-1 text-xs w-32" />
               )}
             </div>
-            <div className="flex gap-4 flex-wrap">
+            <div className="flex gap-4 flex-wrap items-end">
               <label className="text-xs text-slate-500 flex flex-col gap-1">
                 Metric you're picking up
-                <select value={metric} onChange={(e) => { setMetric(e.target.value); setTargetId(''); }}
+                <select value={metric} onChange={(e) => onMetricChange(e.target.value)}
                   className="border border-slate-300 rounded-md px-2 py-1 text-sm">
                   {METRIC_OPTIONS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
                 </select>
               </label>
-              <label className="text-xs text-slate-500 flex flex-col gap-1">
-                Target
-                <select value={targetId} onChange={(e) => setTargetId(e.target.value)}
-                  className="border border-slate-300 rounded-md px-2 py-1 text-sm min-w-[200px]">
-                  <option value="">Choose a target…</option>
-                  {targetOptions(metric).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-                </select>
-              </label>
+
+              {/* Target — metric-specific */}
+              {metric === 'success_rate' && (
+                <label className="text-xs text-slate-500 flex flex-col gap-1">
+                  Target
+                  <select value={srTargetId} onChange={(e) => setSrTargetId(e.target.value)}
+                    className="border border-slate-300 rounded-md px-2 py-1 text-sm min-w-[180px]">
+                    <option value="">Choose a target…</option>
+                    {srTargetOptions().map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                  </select>
+                </label>
+              )}
+
+              {metric === 'label' && (
+                <div className="flex gap-2 items-end">
+                  <label className="text-xs text-slate-500 flex flex-col gap-1">
+                    Label
+                    <select value={labelBand} onChange={(e) => onBandChange(e.target.value)}
+                      className="border border-slate-300 rounded-md px-2 py-1 text-sm">
+                      {LABEL_BANDS.map((b) => <option key={b} value={b}>{b}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs text-slate-500 flex flex-col gap-1">
+                    Direction
+                    <select value={labelDir} onChange={(e) => setLabelDir(e.target.value)}
+                      className="border border-slate-300 rounded-md px-2 py-1 text-sm">
+                      <option value="inc">Increase</option>
+                      <option value="dec">Decrease</option>
+                    </select>
+                  </label>
+                  <label className="text-xs text-slate-500 flex flex-col gap-1">
+                    By (%)
+                    <input type="number" min="1" max="100" value={labelPct}
+                      onChange={(e) => setLabelPct(e.target.value)}
+                      className="border border-slate-300 rounded-md px-2 py-1 text-sm w-20" />
+                  </label>
+                </div>
+              )}
+
+              {metric !== 'success_rate' && metric !== 'label' && (
+                <label className="text-xs text-slate-500 flex flex-col gap-1">
+                  Action
+                  <span className="text-sm text-slate-700 font-medium border border-slate-200 rounded-md px-2 py-1 bg-white">{targetText(impliedTarget(metric))}</span>
+                </label>
+              )}
             </div>
+            {(metric === 'hook_fix' || metric === 'pace_fix' || metric === 'ending_fix') && (
+              <div className="hint">This is judged by the review date: reached if the dominant failure is no longer {metric.replace('_fix', '')} by then, otherwise failed.</div>
+            )}
             <div className="flex gap-4 flex-wrap">
               <DateField label="Actions to be taken by" value={actionDate} set={setActionDate} />
               <DateField label="To be reviewed on" value={reviewDate} set={setReviewDate} />
