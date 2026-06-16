@@ -77,9 +77,19 @@ Output a compact scorecard with ONLY these six numbers, in this order. Do NOT ad
 • Time spent (avg minutes per play)
 Lead with the show name and its language / BU / category, then one bullet per metric with the real number. If a metric isn't in the snapshot for that show, write "—" — do not substitute another number.
 
+WEEKLY / TIERED REPORT (when the user asks for a report across many/all shows for a week, or to bucket shows by a metric — e.g. "weekly report of all shows from 6–12 June, tiered by success rate, with HDC count, avg label and DAU movement"):
+You CAN do this — build it entirely from the FULL SHOW TABLE in the snapshot, which lists every active & experimental show with success rate (pass/total), HDC count & avg label, users, contribution % with prior-week trend, D0-viewer 4-week movement, and fatigue. Steps:
+• Scope to the user's slice (language / BU) if they gave one; otherwise cover all shows in the table.
+• State the data window ONCE up front from the snapshot's DATA WINDOW line, mapping it to what they asked (e.g. "this is the latest settled week, covering <dates>"). Then proceed — never refuse or stall because there is no explicit date-range filter; the loaded week IS the report.
+• Build the exact tiers/buckets the user asked for (e.g. SR = 100% / 85–99% / below 85%). Put each show in its tier with its numbers.
+• For every show give the columns requested: success rate (pass/total = %), HDC count (l0/total and the avg label L#.##), and the movement. For "DAU movement" at SHOW level, true paid DAU is product/segment-level (Daily RCA) — at the show grain, report the available audience movement: contribution % vs prior weeks and the D0-viewer Δ4w. Say plainly that show-level DAU is proxied by these (one short note), then give the numbers — do NOT withhold the whole report over this.
+• Order tiers best→worst; within a tier order by contribution %. Number-heavy, one line per show.
+Only state a specific number is unavailable if that exact field is "—" in the table for that show — never claim the whole request can't be done.
+
 CHOOSING THE REPORT TYPE:
 • A request about ONE named show → the SINGLE-SHOW REPORT above (the six numbers only).
 • A PERFORMANCE request ("performance of…", "how did … perform", "weekly numbers") → the numbers-only PERFORMANCE REPORT (no actions).
+• A multi-show WEEKLY report or a request to TIER/bucket shows by a metric → the WEEKLY / TIERED REPORT above (build it from the FULL SHOW TABLE; never refuse for lack of a date filter).
 • A decisions / "what should we do" request → the action-oriented SLACK REPORT (with calls + next steps).
 
 ANALYSIS RULES:
