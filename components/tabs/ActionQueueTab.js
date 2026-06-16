@@ -2,19 +2,41 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildModel } from '@/lib/model';
+import { buildHdcIndex } from '@/lib/hdc';
 import { fmtDate, weeksAgo, fmtPct, fmtNum, num, LANG_NAMES } from '@/lib/format';
+
+// A show is flagged "L5-heavy" when ≥5/7 (≈71%) of the videos it published in
+// the last 7 days landed in the worst view band (L5 — below the day×language
+// p25). That's a sustained reach/discovery failure worth a manual review.
+const L5_SHARE_THRESHOLD = 5 / 7;
+const L5_MIN_SUPPLY = 3; // need a few videos before the share means anything
 
 // Every experimental decision shows up in the queue. STOP/PROMOTE/CONTINUE are
 // firm calls; anything else (INSUFFICIENT_DATA / LOW_CONFIDENCE left underived)
-// is bucketed as REVIEW so the show is never silently dropped.
-const DECISION_ORDER = ['STOP', 'PROMOTE', 'CONTINUE', 'REVIEW'];
+// is bucketed as REVIEW so the show is never silently dropped. REVIEW_L5 is the
+// L5-heavy flag above.
+const DECISION_ORDER = ['STOP', 'PROMOTE', 'CONTINUE', 'REVIEW_L5', 'REVIEW'];
+const DECISION_LABELS = {
+  STOP: 'STOP', PROMOTE: 'PROMOTE', CONTINUE: 'CONTINUE', REVIEW_L5: 'Review & act', REVIEW: 'REVIEW',
+};
 const DECISION_META = {
   STOP: { bg: '#fee2e2', fg: '#991b1b', ring: 'ring-red-300', chip: 'chip-red' },
   PROMOTE: { bg: '#dcfce7', fg: '#065f46', ring: 'ring-green-300', chip: 'chip-green' },
   CONTINUE: { bg: '#fef3c7', fg: '#92400e', ring: 'ring-amber-300', chip: 'chip-amber' },
+  REVIEW_L5: { bg: '#ede9fe', fg: '#5b21b6', ring: 'ring-purple-300', chip: 'chip-purple' },
   REVIEW: { bg: '#f1f5f9', fg: '#475569', ring: 'ring-slate-300', chip: 'chip-grey' },
 };
 const dispDecision = (verdict) => (['STOP', 'PROMOTE', 'CONTINUE'].includes(verdict) ? verdict : 'REVIEW');
+
+// L5-heavy detector: returns {l5, supply, pct} when the show's last-7d label mix
+// is dominated by L5 past the threshold, else null.
+function l5Info(hd) {
+  if (!hd || !hd.supply || hd.supply < L5_MIN_SUPPLY) return null;
+  const l5 = (hd.labels && hd.labels.L5) || 0;
+  const share = l5 / hd.supply;
+  if (share < L5_SHARE_THRESHOLD) return null;
+  return { l5, supply: hd.supply, pct: Math.round(share * 100) };
+}
 
 const SORTS = [
   { id: 'overdue', label: 'Most overdue decision' },
@@ -95,23 +117,34 @@ export default function ActionQueueTab() {
   const [fixArea, setFixArea] = useState('');
 
   const model = useMemo(() => buildModel(data), [data]);
+  const hdcIdx = useMemo(() => (data.hdcRows ? buildHdcIndex(data.hdcRows) : null), [data]);
 
   // Shows needing a decision: every experimental show (STOP/PROMOTE/CONTINUE/REVIEW)
   // PLUS non-experimental shows that are stop candidates (below the peer stop bar or
-  // reconciled to a stop). Inactive shows are already stopped, so they're excluded.
+  // reconciled to a stop) PLUS L5-heavy shows (≥5/7 of last-7d videos in the worst
+  // view band). Inactive shows are already stopped, so they're excluded.
   const rows = useMemo(() => {
     return model
-      .filter((s) => {
+      .map((s) => ({ s, l5: hdcIdx ? l5Info(hdcIdx.get(s.id)) : null }))
+      .filter(({ s, l5 }) => {
         if (s.status === 'inactive') return false;
         if (s.life?.isExp) return true;
-        return s.life?.band === 'stop' || ['CONFIRMED_STOP', 'STOP_REVIEW'].includes(s.rec?.key);
+        if (s.life?.band === 'stop' || ['CONFIRMED_STOP', 'STOP_REVIEW'].includes(s.rec?.key)) return true;
+        return !!l5;
       })
-      .map((s) => {
+      .map(({ s, l5 }) => {
         const ev = s.eval?.cur || {};
         const raw = String(ev.experimental_decision || '').toUpperCase();
         const isExp = !!s.life?.isExp;
-        const decision = isExp ? dispDecision(s.life.verdictRaw) : 'STOP';
-        const why = isExp ? whyText(s, decision) : (s.rec?.detail || ev.decision_reason || whyText(s, 'STOP'));
+        const isStop = !isExp && (s.life?.band === 'stop' || ['CONFIRMED_STOP', 'STOP_REVIEW'].includes(s.rec?.key));
+        const decision = isExp ? dispDecision(s.life.verdictRaw) : isStop ? 'STOP' : 'REVIEW_L5';
+        const l5Why = l5 ? `Trending L5: ${l5.l5}/${l5.supply} of this week's videos (≈${l5.pct}%) fell into the worst view band (below the p25 reach bar) — review reach/discovery (thumbnails, topics, recommendations) and take action.` : null;
+        let why;
+        if (decision === 'REVIEW_L5') why = l5Why;
+        else {
+          why = isExp ? whyText(s, decision) : (s.rec?.detail || ev.decision_reason || whyText(s, 'STOP'));
+          if (l5) why = `${why} · Also trending L5 (${l5.l5}/${l5.supply}, ≈${l5.pct}%).`;
+        }
         return {
           s,
           decision,
@@ -123,7 +156,7 @@ export default function ActionQueueTab() {
           why,
         };
       });
-  }, [model]);
+  }, [model, hdcIdx]);
 
   const langs = [...new Set(rows.map((r) => r.s.language).filter(Boolean))].sort();
   const statuses = [...new Set(rows.map((r) => r.s.status).filter(Boolean))].sort();
@@ -168,7 +201,7 @@ export default function ActionQueueTab() {
   return (
     <div>
       <h2 className="text-xl font-semibold mb-1">Action Queue</h2>
-      <p className="text-sm text-slate-500 mb-3">Experiments & stop candidates needing a decision</p>
+      <p className="text-sm text-slate-500 mb-3">Experiments, stop candidates & shows trending at the L5 label — needing a decision</p>
 
       <div className="card p-4 mb-4">
         <div className="flex gap-2 mb-3 flex-wrap">
@@ -183,7 +216,7 @@ export default function ActionQueueTab() {
                 className={'rounded-full px-3 py-1 text-sm font-semibold transition ' + (recommendation === d ? 'ring-2 ' + meta.ring + ' ' : '')}
                 style={{ background: meta.bg, color: meta.fg }}
               >
-                {n} {d}
+                {n} {DECISION_LABELS[d] || d}
               </button>
             );
           })}
@@ -224,7 +257,7 @@ export default function ActionQueueTab() {
           <Dd label="STATUS" value={status} set={setStatus} options={statuses} fmt={(s) => s[0].toUpperCase() + s.slice(1)} allLabel="All statuses" />
           <Dd label="BU" value={bu} set={setBu} options={bus} allLabel="All BUs" />
           <Dd label="CATEGORY" value={category} set={setCategory} options={cats} allLabel="All categories" />
-          <Dd label="RECOMMENDATION" value={recommendation} set={setRecommendation} options={DECISION_ORDER} allLabel="All recommendations" />
+          <Dd label="RECOMMENDATION" value={recommendation} set={setRecommendation} options={DECISION_ORDER} fmt={(d) => DECISION_LABELS[d] || d} allLabel="All recommendations" />
           <Dd label="CONFIDENCE" value={confidence} set={setConfidence} options={['high', 'medium', 'low']} allLabel="All confidence" />
         </div>
       </div>
@@ -258,7 +291,7 @@ export default function ActionQueueTab() {
                     <div className="hint">{weeksAgo(r.launch)}</div>
                   </td>
                   <td>
-                    <span className={'chip ' + (DECISION_META[r.decision]?.chip || 'chip-grey')}>{r.decision}</span>
+                    <span className={'chip ' + (DECISION_META[r.decision]?.chip || 'chip-grey')}>{DECISION_LABELS[r.decision] || r.decision}</span>
                     {r.derived && <div className="hint mt-1">ⓘ derived</div>}
                   </td>
                   <td>
