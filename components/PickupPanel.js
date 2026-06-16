@@ -1,11 +1,11 @@
 'use client';
 import { useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { fmtDate, timeAgo, num } from '@/lib/format';
+import { fmtDate, timeAgo } from '@/lib/format';
 import {
   METRIC_OPTIONS, metricLabel, reviewDue, todayStr,
   evalVerdict, VERDICT_META, progressLine, sincePickupParts,
-  srTargetOptions, LABEL_BANDS, LABEL_MAX, labelDefaultDir, makeLabelTarget, impliedTarget,
+  srTargetOptions, LABEL_BANDS, LABEL_MAX, EXPERIMENT_MAX_DAYS, labelDefaultOp, makeLabelTarget, impliedTarget,
   targetText,
 } from '@/lib/ownership';
 
@@ -32,14 +32,14 @@ function Numbers({ title, snap }) {
   );
 }
 
-function DateField({ label, value, set, readOnly }) {
+function DateField({ label, value, set, readOnly, max }) {
   return (
     <label className="text-xs text-slate-500 flex flex-col gap-1">
       {label}
       {readOnly ? (
         <span className="text-sm text-slate-700 font-medium">{value ? fmtDate(value) : '—'}</span>
       ) : (
-        <input type="date" value={value || ''} onChange={(e) => set(e.target.value)}
+        <input type="date" value={value || ''} max={max} onChange={(e) => set(e.target.value)}
           className="border border-slate-300 rounded-md px-2 py-1 text-sm" />
       )}
     </label>
@@ -67,7 +67,7 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
   const [metric, setMetric] = useState('success_rate');
   const [srTargetId, setSrTargetId] = useState('');
   const [labelBand, setLabelBand] = useState('L0');
-  const [labelDir, setLabelDir] = useState('inc');
+  const [labelOp, setLabelOp] = useState('gte');
   const [labelN, setLabelN] = useState(1);
   const [remark, setRemark] = useState('');
   const [actionDate, setActionDate] = useState(claim?.action_date || '');
@@ -77,13 +77,14 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
 
   // When the metric or label band changes, reset the dependent target inputs.
   function onMetricChange(m) { setMetric(m); setSrTargetId(''); }
-  function onBandChange(b) { setLabelBand(b); setLabelDir(labelDefaultDir(b)); }
+  function onBandChange(b) { setLabelBand(b); setLabelOp(labelDefaultOp(b)); }
 
   const isOwner = claim && userName && claim.by === userName;
   const verdict = claim ? evalVerdict(claim, snapshotNow) : null;
   const vMeta = verdict ? VERDICT_META[verdict] : null;
   const due = reviewDue(claim);
-  const curBand = num(snapshotNow?.labels?.[labelBand]) || 0; // current count of the chosen band
+  // review date can't be more than EXPERIMENT_MAX_DAYS past today (HDC data window).
+  const maxReview = (() => { const d = new Date(); d.setDate(d.getDate() + EXPERIMENT_MAX_DAYS); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; })();
 
   async function run(fn) {
     setErr(null); setBusy(true);
@@ -98,8 +99,7 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
     }
     if (metric === 'label') {
       if (!(Number(labelN) >= 0)) return null;
-      // cumulative absolute target from the count at pickup.
-      return makeLabelTarget(labelBand, labelDir, labelN, curBand);
+      return makeLabelTarget(labelBand, labelOp, labelN); // cumulative "produce by review"
     }
     return impliedTarget(metric); // hook/pace/ending fix, stop, promote
   }
@@ -203,32 +203,30 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
               )}
 
               {metric === 'label' && (
-                <div className="flex gap-2 items-end">
+                <div className="flex gap-2 items-end flex-wrap">
+                  <span className="text-sm text-slate-600 pb-1.5">Produce</span>
                   <label className="text-xs text-slate-500 flex flex-col gap-1">
-                    Label <span className="text-slate-400">(now: {curBand})</span>
+                    &nbsp;
+                    <select value={labelOp} onChange={(e) => setLabelOp(e.target.value)}
+                      className="border border-slate-300 rounded-md px-2 py-1 text-sm">
+                      <option value="gte">at least</option>
+                      <option value="lte">at most</option>
+                    </select>
+                  </label>
+                  <label className="text-xs text-slate-500 flex flex-col gap-1">
+                    &nbsp;
+                    <input type="number" min="0" max={LABEL_MAX} value={labelN}
+                      onChange={(e) => setLabelN(e.target.value)}
+                      className="border border-slate-300 rounded-md px-2 py-1 text-sm w-16" />
+                  </label>
+                  <label className="text-xs text-slate-500 flex flex-col gap-1">
+                    &nbsp;
                     <select value={labelBand} onChange={(e) => onBandChange(e.target.value)}
                       className="border border-slate-300 rounded-md px-2 py-1 text-sm">
                       {LABEL_BANDS.map((b) => <option key={b} value={b}>{b}</option>)}
                     </select>
                   </label>
-                  <label className="text-xs text-slate-500 flex flex-col gap-1">
-                    Direction
-                    <select value={labelDir} onChange={(e) => setLabelDir(e.target.value)}
-                      className="border border-slate-300 rounded-md px-2 py-1 text-sm">
-                      <option value="inc">Increase</option>
-                      <option value="dec">Decrease</option>
-                    </select>
-                  </label>
-                  <label className="text-xs text-slate-500 flex flex-col gap-1">
-                    By (count)
-                    <input type="number" min="0" max={LABEL_MAX} value={labelN}
-                      onChange={(e) => setLabelN(e.target.value)}
-                      className="border border-slate-300 rounded-md px-2 py-1 text-sm w-20" />
-                  </label>
-                  <div className="text-xs text-slate-500 pb-1.5">
-                    → target {labelBand} ={' '}
-                    <b>{labelDir === 'dec' ? Math.max(0, curBand - (Number(labelN) || 0)) : Math.min(LABEL_MAX, curBand + (Number(labelN) || 0))}</b>
-                  </div>
+                  <span className="text-sm text-slate-600 pb-1.5">videos by the review date</span>
                 </div>
               )}
 
@@ -239,6 +237,9 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
                 </label>
               )}
             </div>
+            {metric === 'label' && (
+              <div className="hint">Counts the {labelBand} videos this show publishes between pickup and the review date (cumulative).</div>
+            )}
             {(metric === 'hook_fix' || metric === 'pace_fix' || metric === 'ending_fix') && (
               <div className="hint">Judged by the review date: reached if the dominant failure is no longer {metric.replace('_fix', '')} by then, otherwise failed.</div>
             )}
@@ -249,9 +250,10 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
                 className="border border-slate-300 rounded-md px-2 py-1 text-sm resize-none" />
             </label>
             <div className="flex gap-4 flex-wrap">
-              <DateField label="Actions to be taken by" value={actionDate} set={setActionDate} />
-              <DateField label="To be reviewed on" value={reviewDate} set={setReviewDate} />
+              <DateField label="Actions to be taken by" value={actionDate} set={setActionDate} max={maxReview} />
+              <DateField label="To be reviewed on" value={reviewDate} set={setReviewDate} max={maxReview} />
             </div>
+            <div className="hint">Review date can be up to {EXPERIMENT_MAX_DAYS} days out.</div>
             <Numbers title="Current numbers (snapshot at pickup)" snap={snapshotNow} />
             <div className="flex gap-2">
               <button className="btn btn-primary" disabled={busy} onClick={confirmPickup}>

@@ -8,7 +8,7 @@ import { esc, fmtDate, LANG_NAMES, num } from '@/lib/format';
 import { actionChip, agreeBadge, kpiGrid, hdcCard, contribBar, last10Table } from '@/lib/render';
 import { TrajectoryChart, RetentionChart, FailureDoughnut, AudienceSourceChart, RetentionTrendChart } from '@/components/deepdive/charts';
 import PickupPanel from '@/components/PickupPanel';
-import { snapshotFromData, metricLabel, VERDICT_META, canAssign } from '@/lib/ownership';
+import { snapshotFromData, currentFor, metricLabel, VERDICT_META, canAssign } from '@/lib/ownership';
 
 export default function DeepDiveTab() {
   const data = useStore((s) => s.data());
@@ -110,7 +110,7 @@ function DeepBody({ s, data }) {
       {actionsConfigured && claim && (
         <div className="mb-4">
           <div className="font-semibold mb-2 text-sm">Active experiment</div>
-          <PickupPanel s={s} snapshotNow={snapshotFromData(s, data)} readOnly />
+          <PickupPanel s={s} snapshotNow={currentFor(claim, s, data)} readOnly />
         </div>
       )}
       {canLaunch && expOpen && (

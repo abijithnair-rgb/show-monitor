@@ -3,7 +3,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildModel, buildFatIndex } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
-import { metricSnapshot, reviewDue, evalVerdict, VERDICT_META, metricLabel, canAssign } from '@/lib/ownership';
+import { metricSnapshot, currentFor, reviewDue, evalVerdict, VERDICT_META, metricLabel, canAssign } from '@/lib/ownership';
 import { successRate } from '@/lib/metrics';
 import PickupPanel from '@/components/PickupPanel';
 import { fmtDate, weeksAgo, timeAgo, fmtPct, fmtNum, num, LANG_NAMES } from '@/lib/format';
@@ -244,7 +244,7 @@ export default function ActionQueueTab() {
     const claim = actions[String(r.s.id)];
     if (!claim) return false;
     if (reviewDue(claim)) return true;
-    const v = evalVerdict(claim, metricSnapshot(r.s, hdcIdx, fatIdx, data.fatRows));
+    const v = evalVerdict(claim, currentFor(claim, r.s, data, hdcIdx, fatIdx));
     return v !== 'tracking';
   };
   filtered = [...filtered].sort((a, b) => {
@@ -372,7 +372,7 @@ export default function ActionQueueTab() {
             {filtered.length ? (
               filtered.map((r) => {
                 const claim = actions[String(r.s.id)];
-                const snapNow = metricSnapshot(r.s, hdcIdx, fatIdx, data.fatRows);
+                const snapNow = claim ? currentFor(claim, r.s, data, hdcIdx, fatIdx) : metricSnapshot(r.s, hdcIdx, fatIdx, data.fatRows);
                 const verdict = claim ? evalVerdict(claim, snapNow) : null;
                 const vMeta = verdict ? VERDICT_META[verdict] : null;
                 const due = reviewDue(claim);
@@ -437,7 +437,7 @@ export default function ActionQueueTab() {
                 {actionsConfigured && isExpanded && (
                   <tr>
                     <td colSpan={colCount} className="p-2 bg-white">
-                      <PickupPanel s={r.s} snapshotNow={metricSnapshot(r.s, hdcIdx, fatIdx, data.fatRows)} assign={expanded.assign} onClose={() => setExpanded({ id: null, assign: false })} />
+                      <PickupPanel s={r.s} snapshotNow={snapNow} assign={expanded.assign} onClose={() => setExpanded({ id: null, assign: false })} />
                     </td>
                   </tr>
                 )}

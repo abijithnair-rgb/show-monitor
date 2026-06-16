@@ -4,7 +4,7 @@ import { useStore } from '@/store/useStore';
 import { buildModel, buildFatIndex } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
 import {
-  metricSnapshot, metricLabel, targetText, trackedValueText,
+  currentFor, metricLabel, targetText, trackedValueText,
   evalVerdict, VERDICT_META, reviewDue,
 } from '@/lib/ownership';
 import { fmtDate, LANG_NAMES } from '@/lib/format';
@@ -28,7 +28,7 @@ export default function ExperimentsTab() {
     return Object.values(actions || {})
       .map((claim) => {
         const s = byId.get(String(claim.show_id));
-        const cur = s ? metricSnapshot(s, hdcIdx, fatIdx, data.fatRows) : null;
+        const cur = s ? currentFor(claim, s, data, hdcIdx, fatIdx) : null;
         const verdict = cur ? evalVerdict(claim, cur) : 'tracking';
         return { claim, s, cur, verdict };
       })

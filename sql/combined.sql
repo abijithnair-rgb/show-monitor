@@ -1292,9 +1292,10 @@ SELECT 'hdc' AS dataset, TO_JSON_STRING(t) AS row_json FROM (
 --   kn (Kannada)  : 200
 --   ml (Malayalam): 200
 
--- Rolling 10-day window: covers the tool's last-7-day window (today-8..today-2)
--- with margin, and keeps the video_play scan + joins bounded so the query
--- doesn't time out. Widen the INTERVAL if you need more history.
+-- Rolling 16-day window: covers the tool's last-7-day window (today-8..today-2)
+-- AND the experiment board's cumulative "produce by review date" counting (review
+-- dates capped to +14d), while keeping the video_play scan + joins bounded so the
+-- query doesn't time out. Widen the INTERVAL if experiments need a longer horizon.
 
 WITH
 
@@ -1302,7 +1303,7 @@ WITH
 settled_dates AS (
   SELECT DISTINCT DATE(`timestamp`, 'Asia/Kolkata') AS settled_date
   FROM `seekho-c084b.content_recommendation.video_play`
-  WHERE DATE(`timestamp`, 'Asia/Kolkata') BETWEEN DATE_SUB(CURRENT_DATE("Asia/Kolkata"), INTERVAL 10 DAY) AND CURRENT_DATE("Asia/Kolkata")
+  WHERE DATE(`timestamp`, 'Asia/Kolkata') BETWEEN DATE_SUB(CURRENT_DATE("Asia/Kolkata"), INTERVAL 16 DAY) AND CURRENT_DATE("Asia/Kolkata")
 ),
 
 -- Step 2: Unified watch events — settled + intraday (no double-counting)
@@ -1313,7 +1314,7 @@ watch_raw AS (
     CAST(series_id AS INT64)          AS series_id,
     CAST(watchtime AS FLOAT64)        AS seconds
   FROM `seekho-c084b.content_recommendation.video_play`
-  WHERE DATE(`timestamp`, 'Asia/Kolkata') BETWEEN DATE_SUB(CURRENT_DATE("Asia/Kolkata"), INTERVAL 10 DAY) AND CURRENT_DATE("Asia/Kolkata")
+  WHERE DATE(`timestamp`, 'Asia/Kolkata') BETWEEN DATE_SUB(CURRENT_DATE("Asia/Kolkata"), INTERVAL 16 DAY) AND CURRENT_DATE("Asia/Kolkata")
     AND package_name NOT IN (
         'com.bolo.android',
         'com.seekho.ios',
@@ -1334,7 +1335,7 @@ watch_raw AS (
     CAST(series_id AS INT64)          AS series_id,
     CAST(MAX(watchtime) AS FLOAT64)   AS seconds
   FROM `seekho-c084b.content_recommendation.video_play_intraday`
-  WHERE DATE(`timestamp`, 'Asia/Kolkata') BETWEEN DATE_SUB(CURRENT_DATE("Asia/Kolkata"), INTERVAL 10 DAY) AND CURRENT_DATE("Asia/Kolkata")
+  WHERE DATE(`timestamp`, 'Asia/Kolkata') BETWEEN DATE_SUB(CURRENT_DATE("Asia/Kolkata"), INTERVAL 16 DAY) AND CURRENT_DATE("Asia/Kolkata")
     AND DATE(`timestamp`, 'Asia/Kolkata') NOT IN (SELECT settled_date FROM settled_dates)
     AND package_name NOT IN (
         'com.bolo.android',
@@ -1398,7 +1399,7 @@ series_eligible AS (
   LEFT JOIN seekho.users_creatorinfo ci ON cs.creator_id = ci.profile_id
   LEFT JOIN seekho.users_userprofile up ON ci.profile_id = up.user_ptr_id
   LEFT JOIN bu_mapping bu ON cs.category_id = bu.category_id
-  WHERE DATE(cs.approved_on, "Asia/Kolkata") BETWEEN DATE_SUB(CURRENT_DATE("Asia/Kolkata"), INTERVAL 10 DAY) AND CURRENT_DATE("Asia/Kolkata")
+  WHERE DATE(cs.approved_on, "Asia/Kolkata") BETWEEN DATE_SUB(CURRENT_DATE("Asia/Kolkata"), INTERVAL 16 DAY) AND CURRENT_DATE("Asia/Kolkata")
     AND cs.language in ('hi','ta','te','ml','kn')
     AND cs.duration_s > 0
     AND cs.approved_on IS NOT NULL
