@@ -1756,69 +1756,63 @@ ORDER BY show_id, date_, surface
 
 UNION ALL
 SELECT 'retention' AS dataset, TO_JSON_STRING(t) AS row_json FROM (
--- Per-show single-day RETURN RATES by recency state of the paying viewer.
--- D = ref_day (D-2, last fully-settled), D+1 = ret_day (D-1, last observable).
--- Of the PAYING users who watched this show on D, what % came back on D+1,
--- split by how recently they had watched the SAME show before D:
---   NURR = New      (no watch in prior 60d)
---   CURR = Current   (watched 1-6 days ago)
---   RURR = Reactivated (7-29 days ago)
---   SURR = Resurrected (30-60 days ago)
--- *_base = denominator (paying users in that state active on D); *_pct = return %.
-WITH r AS (
-  SELECT
-    DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 2 DAY) AS ref_day,
-    DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 1 DAY) AS ret_day
-),
-paying AS (                       -- paying users as of the reference day
-  SELECT DISTINCT uup.firebase_uid
+-- Per-show WEEKLY RETURN RATES by recency state of the paying viewer.
+-- One row per (show, ref_day) for the last 7 ref days (D-2 .. D-8); each
+-- ref_day's "did they come back?" is measured on ref_day+1 (so the freshest
+-- countable ref_day is D-2, since D-1 is the last fully observable day).
+-- Of the PAYING users who watched this show on ref_day, what % came back the
+-- next day, split by how recently they had watched the SAME show before:
+--   NURR = New (no watch in prior 60d) · CURR = 1-6d ago · RURR = 7-29d ago ·
+--   SURR = 30-60d ago. *_base = denominator; *_pct = return %.
+WITH paying AS (                       -- paying users + first paid date (for "paying as of day d")
+  SELECT uup.firebase_uid, MIN(DATE(pph.purchased_on,'Asia/Kolkata')) AS first_paid
   FROM `seekho-c084b.seekho.experiments_order` eo
   JOIN `seekho-c084b.seekho.experiments_profilepurchasehistory` pph ON eo.id = pph.order_id
   JOIN `seekho-c084b.seekho.users_userprofile` uup ON eo.profile_id = uup.user_ptr_id
-  WHERE LOWER(eo.status) = 'order_paid' AND eo.premium_item_id IS NULL AND eo.is_prod = TRUE
-    AND pph.purchased_on IS NOT NULL
-    AND DATE(pph.purchased_on,'Asia/Kolkata') <= (SELECT ref_day FROM r)
-    AND uup.firebase_uid IS NOT NULL
+  WHERE LOWER(eo.status)='order_paid' AND eo.premium_item_id IS NULL AND eo.is_prod = TRUE
+    AND pph.purchased_on IS NOT NULL AND uup.firebase_uid IS NOT NULL
+  GROUP BY 1
 ),
-act AS (                          -- distinct paying-user x show x day, 5s-qualified watch (60-day window)
+act AS (                               -- distinct paying-user x show x day, 5s-qualified; 68-day window = 7 ref days + 60d lookback
   SELECT p.firebase_uid, cs.show_id, DATE(p.timestamp,'Asia/Kolkata') AS d
   FROM `seekho-c084b.content_recommendation.video_play_combined` p
-  JOIN `seekho-c084b.seekho.courses_series` cs ON SAFE_CAST(p.series_id AS INT64) = cs.id
+  JOIN `seekho-c084b.seekho.courses_series` cs ON SAFE_CAST(p.series_id AS INT64)=cs.id
   JOIN paying pay ON pay.firebase_uid = p.firebase_uid
-  WHERE DATE(p.timestamp,'Asia/Kolkata') BETWEEN DATE_SUB((SELECT ref_day FROM r), INTERVAL 60 DAY) AND (SELECT ret_day FROM r)
-    AND p.watchtime >= 5
-    AND p.firebase_uid IS NOT NULL
+  WHERE DATE(p.timestamp,'Asia/Kolkata') BETWEEN DATE_SUB(CURRENT_DATE('Asia/Kolkata'),INTERVAL 68 DAY) AND DATE_SUB(CURRENT_DATE('Asia/Kolkata'),INTERVAL 1 DAY)
+    AND p.watchtime >= 5 AND p.firebase_uid IS NOT NULL
     AND p.package_name IN ('com.seekho.android','com.seekho.ios','com.nerchuko.android','com.arivu.android','com.kalike.android','com.vidhya.android')
     AND cs.language IN ('hi','ta','te','ml','kn') AND cs.state IN ('live','expired') AND cs.show_id IS NOT NULL
   GROUP BY 1,2,3
 ),
-us AS (                           -- per user x show: activity on ref/return + last prior watch day
-  SELECT firebase_uid, show_id,
-    LOGICAL_OR(d = (SELECT ref_day FROM r)) AS watched_ref,
-    LOGICAL_OR(d = (SELECT ret_day FROM r)) AS watched_ret,
-    MAX(IF(d < (SELECT ref_day FROM r), d, NULL)) AS last_prev
-  FROM act GROUP BY 1,2
+seq AS (                               -- previous & next active day per user x show
+  SELECT firebase_uid, show_id, d,
+    LAG(d)  OVER (PARTITION BY firebase_uid, show_id ORDER BY d) AS prev_d,
+    LEAD(d) OVER (PARTITION BY firebase_uid, show_id ORDER BY d) AS next_d
+  FROM act
 ),
-classified AS (                   -- mutually-exclusive state by days since previous watch of THIS show
-  SELECT show_id, watched_ret,
+cand AS (                              -- one row per (user, show, ref_day) the user was active, paying as of that day
+  SELECT s.show_id, s.d AS ref_day,
+    (s.next_d = DATE_ADD(s.d, INTERVAL 1 DAY)) AS watched_ret,
     CASE
-      WHEN last_prev IS NULL                                                       THEN 'NURR'
-      WHEN DATE_DIFF((SELECT ref_day FROM r), last_prev, DAY) BETWEEN 1 AND 6      THEN 'CURR'
-      WHEN DATE_DIFF((SELECT ref_day FROM r), last_prev, DAY) BETWEEN 7 AND 29     THEN 'RURR'
-      ELSE 'SURR'
+      WHEN s.prev_d IS NULL OR DATE_DIFF(s.d,s.prev_d,DAY) > 60 THEN 'NURR'  -- new: no watch in prior 60 days
+      WHEN DATE_DIFF(s.d,s.prev_d,DAY) BETWEEN 1 AND 6  THEN 'CURR'           -- current: 1-6 days ago
+      WHEN DATE_DIFF(s.d,s.prev_d,DAY) BETWEEN 7 AND 29 THEN 'RURR'           -- reactivated: 7-29 days ago
+      ELSE 'SURR'                                                             -- resurrected: 30-60 days ago
     END AS state
-  FROM us WHERE watched_ref         -- denominator = paying users active on the show on D
+  FROM seq s
+  JOIN paying pay ON pay.firebase_uid = s.firebase_uid
+  WHERE s.d BETWEEN DATE_SUB(CURRENT_DATE('Asia/Kolkata'),INTERVAL 8 DAY) AND DATE_SUB(CURRENT_DATE('Asia/Kolkata'),INTERVAL 2 DAY)
+    AND pay.first_paid <= s.d
 )
-SELECT
-  show_id,
-  COUNTIF(state='NURR') AS nurr_base, ROUND(100*SAFE_DIVIDE(COUNTIF(state='NURR' AND watched_ret),COUNTIF(state='NURR')),1) AS nurr_pct,
-  COUNTIF(state='CURR') AS curr_base, ROUND(100*SAFE_DIVIDE(COUNTIF(state='CURR' AND watched_ret),COUNTIF(state='CURR')),1) AS curr_pct,
-  COUNTIF(state='RURR') AS rurr_base, ROUND(100*SAFE_DIVIDE(COUNTIF(state='RURR' AND watched_ret),COUNTIF(state='RURR')),1) AS rurr_pct,
-  COUNTIF(state='SURR') AS surr_base, ROUND(100*SAFE_DIVIDE(COUNTIF(state='SURR' AND watched_ret),COUNTIF(state='SURR')),1) AS surr_pct,
-  COUNT(*) AS total_active_on_ref
-FROM classified
-GROUP BY show_id
-ORDER BY total_active_on_ref DESC
+SELECT show_id, CAST(ref_day AS STRING) AS ref_day,
+  COUNTIF(state='NURR') nurr_base, ROUND(100*SAFE_DIVIDE(COUNTIF(state='NURR' AND watched_ret),COUNTIF(state='NURR')),1) nurr_pct,
+  COUNTIF(state='CURR') curr_base, ROUND(100*SAFE_DIVIDE(COUNTIF(state='CURR' AND watched_ret),COUNTIF(state='CURR')),1) curr_pct,
+  COUNTIF(state='RURR') rurr_base, ROUND(100*SAFE_DIVIDE(COUNTIF(state='RURR' AND watched_ret),COUNTIF(state='RURR')),1) rurr_pct,
+  COUNTIF(state='SURR') surr_base, ROUND(100*SAFE_DIVIDE(COUNTIF(state='SURR' AND watched_ret),COUNTIF(state='SURR')),1) surr_pct,
+  COUNT(*) total_active_on_ref
+FROM cand
+GROUP BY show_id, ref_day
+ORDER BY show_id, ref_day
 ) t
 
 ORDER BY dataset

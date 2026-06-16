@@ -1,12 +1,12 @@
 'use client';
 import { useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { buildModel, buildFatIndex, buildAudienceIndex, buildRetentionIndex, RETENTION_STATES } from '@/lib/model';
+import { buildModel, buildFatIndex, buildAudienceIndex, buildRetentionIndex, retentionLangMedian, RETENTION_STATES } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
 import { ACTION_META } from '@/lib/constants';
 import { esc, fmtDate, LANG_NAMES, num } from '@/lib/format';
 import { actionChip, agreeBadge, kpiGrid, hdcCard, contribBar, last10Table } from '@/lib/render';
-import { TrajectoryChart, RetentionChart, FailureDoughnut, AudienceSourceChart, RetentionRatesChart } from '@/components/deepdive/charts';
+import { TrajectoryChart, RetentionChart, FailureDoughnut, AudienceSourceChart, RetentionTrendChart } from '@/components/deepdive/charts';
 
 export default function DeepDiveTab() {
   const data = useStore((s) => s.data());
@@ -134,7 +134,7 @@ function DeepBody({ s, data }) {
 
       {data.audRows && <AudienceCard aud={buildAudienceIndex(data.audRows).get(s.id)} />}
 
-      {data.retRows && <RetentionCard ret={buildRetentionIndex(data.retRows).get(s.id)} />}
+      {data.retRows && <RetentionCard retRows={data.retRows} showId={s.id} language={s.language} data={data} />}
 
       {fobj && fobj.eps && fobj.eps.length > 0 && <div dangerouslySetInnerHTML={{ __html: last10Table(fobj.eps) }} />}
     </div>
@@ -176,34 +176,36 @@ function AudienceCard({ aud }) {
   );
 }
 
-function RetentionCard({ ret }) {
-  const hasData = ret && RETENTION_STATES.some((s) => num(ret[s.key + '_pct']) != null);
+function RetentionCard({ retRows, showId, language, data }) {
+  const [showMedian, setShowMedian] = useState(false);
+  const retIdx = useMemo(() => buildRetentionIndex(retRows), [retRows]);
+  const ret = retIdx.get(showId);
+  const hasData = ret && ret.dates && ret.dates.length > 0;
+  // show_ids in the same language (for the reference median), from the model.
+  const langShowIds = useMemo(() => {
+    if (!hasData) return [];
+    return buildModel(data).filter((x) => x.language === language).map((x) => x.id);
+  }, [data, language, hasData]);
+  const median = useMemo(
+    () => (showMedian && hasData ? retentionLangMedian(retIdx, langShowIds, ret.dates) : null),
+    [showMedian, hasData, retIdx, langShowIds, ret]
+  );
   return (
     <div className="card p-4 mb-4">
-      <div className="font-semibold mb-2">Next-day return rate by viewer recency (paying users)</div>
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+        <div className="font-semibold">Next-day return rate by viewer recency — weekly trend (paying users)</div>
+        <label className="text-xs text-slate-600 flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" checked={showMedian} onChange={(e) => setShowMedian(e.target.checked)} />
+          {LANG_NAMES[language] || language} median (dashed)
+        </label>
+      </div>
       {hasData ? (
         <>
-          <div style={{ position: 'relative', height: 240 }}>
-            <RetentionRatesChart ret={ret} />
+          <div style={{ position: 'relative', height: 280 }}>
+            <RetentionTrendChart ret={ret} median={median} />
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
-            {RETENTION_STATES.map((s) => {
-              const pct = num(ret[s.key + '_pct']);
-              const base = num(ret[s.key + '_base']);
-              return (
-                <div key={s.key} className="rounded-md border border-slate-200 px-2 py-1.5">
-                  <div className="text-xs text-slate-500 flex items-center gap-1">
-                    <span className="inline-block w-2 h-2 rounded-full" style={{ background: s.color }} />
-                    {s.label}
-                  </div>
-                  <div className="text-lg font-semibold">{pct != null ? pct + '%' : '—'}</div>
-                  <div className="hint">base {base != null ? base.toLocaleString() : '—'}</div>
-                </div>
-              );
-            })}
-          </div>
-          <div className="hint mt-2">
-            Of the paying users who watched this show on the reference day (D-2), the share who returned to it the next day (D-1) — split by how recently they had previously watched: New (no watch in 60d), Current (1–6d ago), Reactivated (7–29d), Resurrected (30–60d).
+          <div className="hint mt-1">
+            Daily over the last week: of the paying users who watched this show on each reference day, the share who returned the next day — split by recency: New (no watch in 60d), Current (1–6d), Reactivated (7–29d), Resurrected (30–60d). Toggle adds the {LANG_NAMES[language] || language} median per state as dashed reference lines.
           </div>
         </>
       ) : (

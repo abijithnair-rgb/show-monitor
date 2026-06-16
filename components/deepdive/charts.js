@@ -108,36 +108,66 @@ export function AudienceSourceChart({ aud, metric = 'views' }) {
   );
 }
 
-// Next-day return rate by viewer-recency state (NURR/CURR/RURR/SURR) — a bar
-// per state with its return %, base size shown in the tooltip.
-export function RetentionRatesChart({ ret }) {
+// Next-day return rate over a week, one solid line per recency state
+// (NURR/CURR/RURR/SURR). When `median` is provided, overlay each state's
+// language median as a dashed line of the same colour for reference.
+export function RetentionTrendChart({ ret, median }) {
   const states = RETENTION_STATES;
-  const pct = (k) => num(ret[k + '_pct']);
-  const base = (k) => num(ret[k + '_base']);
+  const shortDate = (d) => { const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(d); return m ? `${m[2]}/${m[1]}` : d; };
+  const base = (k, i) => (ret.base?.[k] ? ret.base[k][i] : null);
+  const datasets = states.map((s) => ({
+    label: s.label,
+    data: ret.pct[s.key],
+    borderColor: s.color,
+    backgroundColor: s.color,
+    tension: 0.3,
+    pointRadius: 0,
+    pointHoverRadius: 3,
+    borderWidth: 2,
+    spanGaps: true,
+    _base: s.key,
+  }));
+  if (median) {
+    states.forEach((s) => {
+      datasets.push({
+        label: s.label + ' · median',
+        data: median[s.key],
+        borderColor: s.color,
+        backgroundColor: 'transparent',
+        borderDash: [5, 4],
+        tension: 0.3,
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        borderWidth: 1.5,
+        spanGaps: true,
+      });
+    });
+  }
   return (
-    <Bar
-      data={{
-        labels: states.map((s) => s.label),
-        datasets: [{
-          data: states.map((s) => pct(s.key)),
-          backgroundColor: states.map((s) => s.color),
-          borderRadius: 4,
-        }],
-      }}
+    <Line
+      data={{ labels: ret.dates.map(shortDate), datasets }}
       options={{
+        interaction: { mode: 'index', intersect: false },
         plugins: {
-          legend: { display: false },
+          legend: { display: true, labels: { boxWidth: 10, font: { size: 10 } } },
           tooltip: {
             callbacks: {
               label: (ctx) => {
-                const s = states[ctx.dataIndex];
-                const b = base(s.key);
-                return `${ctx.parsed.y}% returned next day · base ${b != null ? b.toLocaleString() : '—'} (${s.desc})`;
+                const ds = ctx.dataset;
+                const v = ctx.parsed.y;
+                if (ds._base) {
+                  const b = base(ds._base, ctx.dataIndex);
+                  return `${ds.label}: ${v == null ? '—' : v + '%'}${b != null ? ` · base ${b.toLocaleString()}` : ''}`;
+                }
+                return `${ds.label}: ${v == null ? '—' : v + '%'}`;
               },
             },
           },
         },
-        scales: { y: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + '%' } } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 8, font: { size: 9 } } },
+          y: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + '%' } },
+        },
         maintainAspectRatio: false,
       }}
     />
