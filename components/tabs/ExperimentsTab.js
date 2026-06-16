@@ -104,7 +104,12 @@ export default function ExperimentsTab() {
                       )}
                     </td>
                     <td><span className="chip chip-purple">{metricLabel(claim.metric)}</span></td>
-                    <td className="font-medium text-slate-700">{claim.by}</td>
+                    <td className="font-medium text-slate-700">
+                      {claim.by}
+                      {claim.assigned_by && (
+                        <div className="mt-1"><span className="chip chip-amber" title={`Assigned by ${claim.assigned_by}`}>assigned</span></div>
+                      )}
+                    </td>
                     <td>{trackedValueText(claim.target, claim.snapshot)}</td>
                     <td className="text-sm text-slate-600">{targetText(claim.target)}</td>
                     <td className="font-semibold">{cur ? trackedValueText(claim.target, cur) : '—'}</td>
