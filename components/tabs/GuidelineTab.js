@@ -62,6 +62,14 @@ const METRIC_GROUPS = [
       ['Hindi show triage', 'Trailing-7d per-show flags vs the show\'s BU: poor L0% (hit-rate below BU), high L4+L5% (heavy low-view tail), and supply gap vs the show\'s frequency target — each with a concrete recommendation.'],
     ],
   },
+  {
+    title: 'Action Queue — shared ownership',
+    metrics: [
+      ['Pick up / owner', 'Anyone can "pick up" an action in the Action Queue to claim it. The owner\'s name and the pickup date are shared across everyone using the tool (stored centrally, not per-browser), so the team can see who is working on what. Identity is a self-reported name (no login).'],
+      ['Mark done / Release', 'The owner can mark a picked-up action done (kept on the board with a done stamp) or release it back to the pool for someone else.'],
+      ['Since pickup', 'When an action is claimed, the show\'s key metrics (HDC rate, contribution %, success rate, users) are snapshotted. The "Since pickup" column then shows the change from that snapshot to the latest data — so the impact of the work is visible over time.'],
+    ],
+  },
 ];
 
 const ROWS = [

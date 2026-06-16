@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { idbSet, idbGet, idbDel } from '@/lib/idb';
 import { sampleData } from '@/lib/sample';
 import { fetchSheets, fetchRemote, remoteStatus } from '@/lib/remote';
+import { fetchActions } from '@/lib/actions';
 
 // Global app state (replaces the original mutable `state` object).
 export const useStore = create((set, get) => ({
@@ -13,6 +14,9 @@ export const useStore = create((set, get) => ({
   sheetCombinedUrl: '', sheetRcaUrl: '',
   remoteConfigured: { combined: false, rca: false },
   lastSyncAt: null, syncing: false, syncError: null,
+
+  // Shared action-ownership board (Vercel KV). actions = { show_id: claim }.
+  actions: {}, actionsConfigured: false, userName: '',
 
   tab: 'data',
   filters: { language: '', category: '', bu: '', status: '', action: '', agreement: '' },
@@ -72,6 +76,7 @@ export const useStore = create((set, get) => ({
         patch.sheetCombinedUrl = st.sheetCombinedUrl || '';
         patch.sheetRcaUrl = st.sheetRcaUrl || '';
         patch.lastSyncAt = st.lastSyncAt || null;
+        patch.userName = st.userName || '';
       }
       if (e && e.rows) { patch.evalRows = e.rows; patch.evalMeta = e.meta; }
       if (f && f.rows) { patch.fatRows = f.rows; patch.fatMeta = f.meta; }
@@ -84,6 +89,7 @@ export const useStore = create((set, get) => ({
       if (re && re.rows) { patch.retRows = re.rows; patch.retMeta = re.meta; }
       patch.tab = patch.evalRows || patch.fatRows ? 'explorer' : 'data';
       set(patch);
+      get().loadActions();
     } catch (err) {
       console.warn('idb load failed', err);
       set({ hydrated: true });
@@ -114,10 +120,30 @@ export const useStore = create((set, get) => ({
     await get().persist();
   },
 
+  // ---- Shared action-ownership board (Vercel KV) ----
+  loadActions: async () => {
+    try {
+      const { configured, actions } = await fetchActions();
+      set({ actionsConfigured: !!configured, actions: actions || {} });
+    } catch {
+      set({ actionsConfigured: false });
+    }
+  },
+  // Patch a single claim into the map (null = removed); used after a write.
+  applyClaim: (showId, claim) => set((st) => {
+    const next = { ...st.actions };
+    if (claim) next[String(showId)] = claim; else delete next[String(showId)];
+    return { actions: next };
+  }),
+  setUserName: async (name) => {
+    set({ userName: String(name || '').trim() });
+    await get().saveSettings();
+  },
+
   // ---- Google-Sheet auto-sync ----
   saveSettings: async () => {
     const s = get();
-    await idbSet('settings', { sheetCombinedUrl: s.sheetCombinedUrl, sheetRcaUrl: s.sheetRcaUrl, lastSyncAt: s.lastSyncAt });
+    await idbSet('settings', { sheetCombinedUrl: s.sheetCombinedUrl, sheetRcaUrl: s.sheetRcaUrl, lastSyncAt: s.lastSyncAt, userName: s.userName });
   },
   setSheetUrl: async (which, url) => {
     set(which === 'rca' ? { sheetRcaUrl: url } : { sheetCombinedUrl: url });
@@ -126,6 +152,7 @@ export const useStore = create((set, get) => ({
   // Prefer Redash (server-configured); fall back to Google-Sheet links.
   autoSync: async ({ silent } = {}) => {
     const s = get();
+    s.loadActions(); // refresh the shared ownership board alongside data sync
     const cfg = await s.checkRemote();
     if (cfg.combined || cfg.rca) return s.syncFromRedash({ silent });
     if (s.sheetCombinedUrl || s.sheetRcaUrl) return s.syncFromSheets({ silent });

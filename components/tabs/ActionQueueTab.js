@@ -1,9 +1,11 @@
 'use client';
 import { useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { buildModel } from '@/lib/model';
+import { buildModel, buildFatIndex } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
-import { fmtDate, weeksAgo, fmtPct, fmtNum, num, LANG_NAMES } from '@/lib/format';
+import { successRate } from '@/lib/metrics';
+import { claimAction, markDone, releaseAction } from '@/lib/actions';
+import { fmtDate, weeksAgo, timeAgo, fmtPct, fmtNum, num, LANG_NAMES } from '@/lib/format';
 
 // A show is flagged "L5-heavy" when ≥5/7 (≈71%) of the videos it published in
 // the last 7 days landed in the worst view band (L5 — below the day×language
@@ -102,9 +104,33 @@ function TrajectoryCell({ value }) {
   return <span className="text-slate-300">—&nbsp;·</span>;
 }
 
+// Per-show live metric snapshot — same fields the AI snapshot uses, so a claim
+// captures "where the show was when picked up" and we can show the delta since.
+function metricSnapshot(s, hdcIdx, fatIdx, fatRows) {
+  const ev = s.eval?.cur || {};
+  const hd = hdcIdx?.get(s.id);
+  const eps = fatIdx?.get(s.id)?.eps;
+  const sr = eps ? successRate(eps, fatRows) : null;
+  return {
+    contrib: num(ev.l3w_current_contrib_pct),
+    users: num(ev.show_users),
+    hdcRate: hd && hd.supply ? hd.hdcRatePct : null,
+    successRate: sr && sr.n ? sr.pct : null,
+  };
+}
+
 export default function ActionQueueTab() {
   const data = useStore((s) => s.data());
   const openDeepDive = useStore((s) => s.openDeepDive);
+  const actions = useStore((s) => s.actions);
+  const actionsConfigured = useStore((s) => s.actionsConfigured);
+  const userName = useStore((s) => s.userName);
+  const setUserName = useStore((s) => s.setUserName);
+  const applyClaim = useStore((s) => s.applyClaim);
+
+  const [nameDraft, setNameDraft] = useState('');
+  const [busyId, setBusyId] = useState(null);
+  const [actionErr, setActionErr] = useState(null);
 
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('overdue');
@@ -118,6 +144,54 @@ export default function ActionQueueTab() {
 
   const model = useMemo(() => buildModel(data), [data]);
   const hdcIdx = useMemo(() => (data.hdcRows ? buildHdcIndex(data.hdcRows) : null), [data]);
+  const fatIdx = useMemo(() => (data.fatRows ? buildFatIndex(data.fatRows) : null), [data]);
+
+  // Claim handlers — optimistic patch via applyClaim, then surface errors.
+  async function runClaim(fn, showId) {
+    setActionErr(null);
+    setBusyId(showId);
+    try {
+      const { claim } = await fn();
+      applyClaim(showId, claim);
+    } catch (e) {
+      setActionErr(e.message || 'Action failed.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+  const onPickUp = (s) => {
+    const name = (userName || nameDraft).trim();
+    if (!name) { setActionErr('Enter your name first (top-right) so the team knows who picked this up.'); return; }
+    if (!userName && name) setUserName(name);
+    const snap = metricSnapshot(s, hdcIdx, fatIdx, data.fatRows);
+    runClaim(() => claimAction(s.id, name, snap), s.id);
+  };
+  const onDone = (s) => runClaim(() => markDone(s.id, userName || 'someone'), s.id);
+  const onRelease = (s) => runClaim(() => releaseAction(s.id), s.id);
+
+  // Format the "since pickup" delta line from a claim's snapshot vs current.
+  function sincePickup(s, claim) {
+    if (!claim?.snapshot) return null;
+    const cur = metricSnapshot(s, hdcIdx, fatIdx, data.fatRows);
+    const snap = claim.snapshot;
+    const parts = [];
+    const line = (label, was, now, unit, pp) => {
+      if (was == null && now == null) return;
+      const a = was == null ? '—' : was + unit;
+      const b = now == null ? '—' : now + unit;
+      if (was != null && now != null && was !== now) {
+        const d = Math.round((now - was) * 10) / 10;
+        parts.push(`${label} ${a}→${b} (${d >= 0 ? '+' : ''}${d}${pp ? 'pp' : unit})`);
+      } else {
+        parts.push(`${label} ${a}→${b}`);
+      }
+    };
+    line('HDC', snap.hdcRate, cur.hdcRate, '%', true);
+    line('Contrib', snap.contrib, cur.contrib, '%', true);
+    line('SR', snap.successRate, cur.successRate, '%', true);
+    if (snap.users != null || cur.users != null) parts.push(`Users ${snap.users ?? '—'}→${cur.users ?? '—'}`);
+    return parts;
+  }
 
   // Shows needing a decision: every experimental show (STOP/PROMOTE/CONTINUE/REVIEW)
   // PLUS non-experimental shows that are stop candidates (below the peer stop bar or
@@ -200,8 +274,36 @@ export default function ActionQueueTab() {
 
   return (
     <div>
-      <h2 className="text-xl font-semibold mb-1">Action Queue</h2>
-      <p className="text-sm text-slate-500 mb-3">Experiments, stop candidates & shows trending at the L5 label — needing a decision</p>
+      <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
+        <h2 className="text-xl font-semibold">Action Queue</h2>
+        {actionsConfigured && (
+          <div className="flex items-center gap-2 text-xs text-slate-600">
+            <span className="text-slate-400">You:</span>
+            {userName ? (
+              <>
+                <span className="chip chip-blue">{userName}</span>
+                <button className="text-slate-400 hover:text-slate-700 underline" onClick={() => { setNameDraft(userName); setUserName(''); }}>change</button>
+              </>
+            ) : (
+              <form
+                onSubmit={(e) => { e.preventDefault(); if (nameDraft.trim()) setUserName(nameDraft.trim()); }}
+                className="flex items-center gap-1"
+              >
+                <input
+                  value={nameDraft}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  placeholder="your name"
+                  className="border border-slate-300 rounded-md px-2 py-1 text-xs w-32"
+                />
+                <button type="submit" className="btn btn-ghost text-xs">Save</button>
+              </form>
+            )}
+          </div>
+        )}
+      </div>
+      <p className="text-sm text-slate-500 mb-3">Experiments, stop candidates & shows trending at the L5 label — needing a decision.{actionsConfigured ? " Pick up an action to let the team know you're on it." : ''}</p>
+      {!actionsConfigured && <p className="hint mb-3">Shared "pick up" is not configured on the server — actions are view-only here. (Link a Vercel KV store to enable team ownership.)</p>}
+      {actionErr && <div className="banner banner-red text-[12px] mb-3"><span>⚠ {actionErr}</span></div>}
 
       <div className="card p-4 mb-4">
         <div className="flex gap-2 mb-3 flex-wrap">
@@ -270,6 +372,8 @@ export default function ActionQueueTab() {
               <th>Launched</th>
               <th>Recommendation</th>
               <th>Why</th>
+              {actionsConfigured && <th>Owner / status</th>}
+              {actionsConfigured && <th>Since pickup</th>}
               <th>Fix area</th>
               <th>Trajectory</th>
               <th>Confidence</th>
@@ -277,7 +381,11 @@ export default function ActionQueueTab() {
           </thead>
           <tbody>
             {filtered.length ? (
-              filtered.map((r) => (
+              filtered.map((r) => {
+                const claim = actions[String(r.s.id)];
+                const isOwner = claim && userName && claim.by === userName;
+                const deltas = claim ? sincePickup(r.s, claim) : null;
+                return (
                 <tr key={r.s.id} className="row-clickable" onClick={() => openDeepDive(r.s.id)}>
                   <td>
                     <div className="font-medium">{r.s.title || '—'}</div>
@@ -297,14 +405,55 @@ export default function ActionQueueTab() {
                   <td>
                     <div className="text-sm text-slate-600 truncate" style={{ maxWidth: 360 }} title={r.why}>{r.why}</div>
                   </td>
+                  {actionsConfigured && (
+                    <td onClick={(e) => e.stopPropagation()}>
+                      {claim ? (
+                        <div className="text-xs">
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <span className={'chip ' + (claim.status === 'done' ? 'chip-green' : 'chip-amber')}>
+                              {claim.status === 'done' ? '✓ done' : '● in progress'}
+                            </span>
+                            <span className="font-medium text-slate-700">{claim.by}</span>
+                          </div>
+                          <div className="hint mt-0.5">picked up {timeAgo(claim.claimed_at)}{claim.status === 'done' && claim.done_at ? ` · done ${timeAgo(claim.done_at)}` : ''}</div>
+                          {isOwner && (
+                            <div className="mt-1 flex gap-2">
+                              {claim.status !== 'done' && (
+                                <button className="text-emerald-700 hover:underline disabled:opacity-50" disabled={busyId === r.s.id} onClick={() => onDone(r.s)}>Mark done</button>
+                              )}
+                              <button className="text-slate-400 hover:text-slate-700 hover:underline disabled:opacity-50" disabled={busyId === r.s.id} onClick={() => onRelease(r.s)}>Release</button>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <button
+                          className="btn btn-ghost text-xs disabled:opacity-50"
+                          disabled={busyId === r.s.id}
+                          onClick={() => onPickUp(r.s)}
+                        >
+                          {busyId === r.s.id ? '…' : 'Pick up'}
+                        </button>
+                      )}
+                    </td>
+                  )}
+                  {actionsConfigured && (
+                    <td>
+                      {claim && deltas && deltas.length ? (
+                        <div className="text-xs text-slate-600 leading-relaxed" style={{ maxWidth: 240 }}>{deltas.join(' · ')}</div>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
+                    </td>
+                  )}
                   <td><FixCell mode={r.s.fat?.mode} /></td>
                   <td><TrajectoryCell value={r.trajectory} /></td>
                   <td><ConfidenceChip value={r.confidence} /></td>
                 </tr>
-              ))
+                );
+              })
             ) : (
               <tr>
-                <td colSpan={7} className="text-center text-slate-400 py-6">No shows need a decision right now. ✓</td>
+                <td colSpan={actionsConfigured ? 9 : 7} className="text-center text-slate-400 py-6">No shows need a decision right now. ✓</td>
               </tr>
             )}
           </tbody>
