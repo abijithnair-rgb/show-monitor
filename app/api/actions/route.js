@@ -67,15 +67,35 @@ export async function POST(req) {
   const showId = body?.show_id != null ? String(body.show_id) : '';
   if (!showId) return Response.json({ error: 'show_id is required.' }, { status: 400 });
 
+  // Normalise a YYYY-MM-DD date input (or '' / null) to a clean string or null.
+  const dateOrNull = (v) => {
+    const s = v == null ? '' : String(v).slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+  };
+
   try {
     if (op === 'release') {
       await kv(['HDEL', KEY, showId]);
       return Response.json({ ok: true, show_id: showId, claim: null });
     }
+    // 'update' edits dates/note on an existing claim without changing ownership.
+    if (op === 'update') {
+      let prev = null;
+      try { const raw = await kv(['HGET', KEY, showId]); prev = raw ? JSON.parse(raw) : null; } catch { prev = null; }
+      if (!prev) return Response.json({ error: 'No claim to update.' }, { status: 404 });
+      const claim = {
+        ...prev,
+        action_date: 'action_date' in body ? dateOrNull(body.action_date) : (prev.action_date ?? null),
+        review_date: 'review_date' in body ? dateOrNull(body.review_date) : (prev.review_date ?? null),
+        note: body?.note != null ? String(body.note) : (prev.note || ''),
+      };
+      await kv(['HSET', KEY, showId, JSON.stringify(claim)]);
+      return Response.json({ ok: true, show_id: showId, claim });
+    }
     if (op === 'claim' || op === 'done') {
       const by = String(body?.by || '').trim();
       if (!by) return Response.json({ error: 'A name (by) is required.' }, { status: 400 });
-      // For "done" preserve the original claim's by/claimed_at/snapshot when present.
+      // For "done" preserve the original claim's by/claimed_at/snapshot/dates when present.
       let prev = null;
       try { const raw = await kv(['HGET', KEY, showId]); prev = raw ? JSON.parse(raw) : null; } catch { prev = null; }
       const now = new Date().toISOString();
@@ -84,6 +104,8 @@ export async function POST(req) {
         status: op === 'done' ? 'done' : 'in_progress',
         by: op === 'done' && prev?.by ? prev.by : by,
         claimed_at: prev?.claimed_at || now,
+        action_date: op === 'done' ? (prev?.action_date ?? null) : dateOrNull(body?.action_date) ?? (prev?.action_date ?? null),
+        review_date: op === 'done' ? (prev?.review_date ?? null) : dateOrNull(body?.review_date) ?? (prev?.review_date ?? null),
         done_at: op === 'done' ? now : null,
         note: body?.note != null ? String(body.note) : (prev?.note || ''),
         snapshot: prev?.snapshot || body?.snapshot || null,

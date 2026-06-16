@@ -1,10 +1,10 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildModel, buildFatIndex } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
-import { successRate } from '@/lib/metrics';
-import { claimAction, markDone, releaseAction } from '@/lib/actions';
+import { metricSnapshot, reviewDue } from '@/lib/ownership';
+import PickupPanel from '@/components/PickupPanel';
 import { fmtDate, weeksAgo, timeAgo, fmtPct, fmtNum, num, LANG_NAMES } from '@/lib/format';
 
 // A show is flagged "L5-heavy" when ≥5/7 (≈71%) of the videos it published in
@@ -104,21 +104,6 @@ function TrajectoryCell({ value }) {
   return <span className="text-slate-300">—&nbsp;·</span>;
 }
 
-// Per-show live metric snapshot — same fields the AI snapshot uses, so a claim
-// captures "where the show was when picked up" and we can show the delta since.
-function metricSnapshot(s, hdcIdx, fatIdx, fatRows) {
-  const ev = s.eval?.cur || {};
-  const hd = hdcIdx?.get(s.id);
-  const eps = fatIdx?.get(s.id)?.eps;
-  const sr = eps ? successRate(eps, fatRows) : null;
-  return {
-    contrib: num(ev.l3w_current_contrib_pct),
-    users: num(ev.show_users),
-    hdcRate: hd && hd.supply ? hd.hdcRatePct : null,
-    successRate: sr && sr.n ? sr.pct : null,
-  };
-}
-
 export default function ActionQueueTab() {
   const data = useStore((s) => s.data());
   const openDeepDive = useStore((s) => s.openDeepDive);
@@ -126,11 +111,9 @@ export default function ActionQueueTab() {
   const actionsConfigured = useStore((s) => s.actionsConfigured);
   const userName = useStore((s) => s.userName);
   const setUserName = useStore((s) => s.setUserName);
-  const applyClaim = useStore((s) => s.applyClaim);
 
   const [nameDraft, setNameDraft] = useState('');
-  const [busyId, setBusyId] = useState(null);
-  const [actionErr, setActionErr] = useState(null);
+  const [expandedId, setExpandedId] = useState(null); // which show's pickup panel is open
 
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('overdue');
@@ -145,53 +128,6 @@ export default function ActionQueueTab() {
   const model = useMemo(() => buildModel(data), [data]);
   const hdcIdx = useMemo(() => (data.hdcRows ? buildHdcIndex(data.hdcRows) : null), [data]);
   const fatIdx = useMemo(() => (data.fatRows ? buildFatIndex(data.fatRows) : null), [data]);
-
-  // Claim handlers — optimistic patch via applyClaim, then surface errors.
-  async function runClaim(fn, showId) {
-    setActionErr(null);
-    setBusyId(showId);
-    try {
-      const { claim } = await fn();
-      applyClaim(showId, claim);
-    } catch (e) {
-      setActionErr(e.message || 'Action failed.');
-    } finally {
-      setBusyId(null);
-    }
-  }
-  const onPickUp = (s) => {
-    const name = (userName || nameDraft).trim();
-    if (!name) { setActionErr('Enter your name first (top-right) so the team knows who picked this up.'); return; }
-    if (!userName && name) setUserName(name);
-    const snap = metricSnapshot(s, hdcIdx, fatIdx, data.fatRows);
-    runClaim(() => claimAction(s.id, name, snap), s.id);
-  };
-  const onDone = (s) => runClaim(() => markDone(s.id, userName || 'someone'), s.id);
-  const onRelease = (s) => runClaim(() => releaseAction(s.id), s.id);
-
-  // Format the "since pickup" delta line from a claim's snapshot vs current.
-  function sincePickup(s, claim) {
-    if (!claim?.snapshot) return null;
-    const cur = metricSnapshot(s, hdcIdx, fatIdx, data.fatRows);
-    const snap = claim.snapshot;
-    const parts = [];
-    const line = (label, was, now, unit, pp) => {
-      if (was == null && now == null) return;
-      const a = was == null ? '—' : was + unit;
-      const b = now == null ? '—' : now + unit;
-      if (was != null && now != null && was !== now) {
-        const d = Math.round((now - was) * 10) / 10;
-        parts.push(`${label} ${a}→${b} (${d >= 0 ? '+' : ''}${d}${pp ? 'pp' : unit})`);
-      } else {
-        parts.push(`${label} ${a}→${b}`);
-      }
-    };
-    line('HDC', snap.hdcRate, cur.hdcRate, '%', true);
-    line('Contrib', snap.contrib, cur.contrib, '%', true);
-    line('SR', snap.successRate, cur.successRate, '%', true);
-    if (snap.users != null || cur.users != null) parts.push(`Users ${snap.users ?? '—'}→${cur.users ?? '—'}`);
-    return parts;
-  }
 
   // Shows needing a decision: every experimental show (STOP/PROMOTE/CONTINUE/REVIEW)
   // PLUS non-experimental shows that are stop candidates (below the peer stop bar or
@@ -262,11 +198,17 @@ export default function ActionQueueTab() {
   });
 
   const launchT = (r) => (r.launch ? new Date(r.launch).getTime() || Infinity : Infinity);
+  // Review-due claims (review date reached, not done) always float to the very top,
+  // regardless of the chosen sort — they're the actions that need attention now.
+  const dueOf = (r) => reviewDue(actions[String(r.s.id)]);
   filtered = [...filtered].sort((a, b) => {
+    const da = dueOf(a), db = dueOf(b);
+    if (da !== db) return da ? -1 : 1;
     if (sortBy === 'recent') return launchT(b) - launchT(a);
     if (sortBy === 'recommendation') return (a.decision === 'STOP' ? 0 : 1) - (b.decision === 'STOP' ? 0 : 1) || launchT(a) - launchT(b);
     return launchT(a) - launchT(b); // overdue: oldest launch first
   });
+  const dueCount = filtered.filter(dueOf).length;
 
   function clearFilters() {
     setSearch(''); setLanguage(''); setStatus(''); setBu(''); setCategory(''); setRecommendation(''); setConfidence(''); setFixArea('');
@@ -301,9 +243,9 @@ export default function ActionQueueTab() {
           </div>
         )}
       </div>
-      <p className="text-sm text-slate-500 mb-3">Experiments, stop candidates & shows trending at the L5 label — needing a decision.{actionsConfigured ? " Pick up an action to let the team know you're on it." : ''}</p>
+      <p className="text-sm text-slate-500 mb-3">Experiments, stop candidates & shows trending at the L5 label — needing a decision.{actionsConfigured ? " Pick up an action to set review dates and let the team know you're on it." : ''}</p>
       {!actionsConfigured && <p className="hint mb-3">Shared "pick up" is not configured on the server — actions are view-only here. (Link a Vercel KV store to enable team ownership.)</p>}
-      {actionErr && <div className="banner banner-red text-[12px] mb-3"><span>⚠ {actionErr}</span></div>}
+      {actionsConfigured && dueCount > 0 && <div className="banner banner-red text-[12px] mb-3"><span>⏰ {dueCount} picked-up {dueCount === 1 ? 'action is' : 'actions are'} due for review — shown at the top.</span></div>}
 
       <div className="card p-4 mb-4">
         <div className="flex gap-2 mb-3 flex-wrap">
@@ -373,7 +315,6 @@ export default function ActionQueueTab() {
               <th>Recommendation</th>
               <th>Why</th>
               {actionsConfigured && <th>Owner / status</th>}
-              {actionsConfigured && <th>Since pickup</th>}
               <th>Fix area</th>
               <th>Trajectory</th>
               <th>Confidence</th>
@@ -383,10 +324,13 @@ export default function ActionQueueTab() {
             {filtered.length ? (
               filtered.map((r) => {
                 const claim = actions[String(r.s.id)];
-                const isOwner = claim && userName && claim.by === userName;
-                const deltas = claim ? sincePickup(r.s, claim) : null;
+                const due = reviewDue(claim);
+                const expanded = expandedId === r.s.id;
+                const colCount = actionsConfigured ? 8 : 7;
+                const toggle = (e) => { e.stopPropagation(); setExpandedId((v) => (v === r.s.id ? null : r.s.id)); };
                 return (
-                <tr key={r.s.id} className="row-clickable" onClick={() => openDeepDive(r.s.id)}>
+                <Fragment key={r.s.id}>
+                <tr className={'row-clickable' + (due ? ' bg-red-50' : '')} onClick={() => openDeepDive(r.s.id)}>
                   <td>
                     <div className="font-medium">{r.s.title || '—'}</div>
                     <div className="mt-1 flex gap-1 flex-wrap">
@@ -408,40 +352,22 @@ export default function ActionQueueTab() {
                   {actionsConfigured && (
                     <td onClick={(e) => e.stopPropagation()}>
                       {claim ? (
-                        <div className="text-xs">
+                        <button className="text-left text-xs hover:opacity-80" onClick={toggle}>
                           <div className="flex items-center gap-1 flex-wrap">
                             <span className={'chip ' + (claim.status === 'done' ? 'chip-green' : 'chip-amber')}>
                               {claim.status === 'done' ? '✓ done' : '● in progress'}
                             </span>
                             <span className="font-medium text-slate-700">{claim.by}</span>
+                            {due && <span className="chip chip-red">review due</span>}
                           </div>
-                          <div className="hint mt-0.5">picked up {timeAgo(claim.claimed_at)}{claim.status === 'done' && claim.done_at ? ` · done ${timeAgo(claim.done_at)}` : ''}</div>
-                          {isOwner && (
-                            <div className="mt-1 flex gap-2">
-                              {claim.status !== 'done' && (
-                                <button className="text-emerald-700 hover:underline disabled:opacity-50" disabled={busyId === r.s.id} onClick={() => onDone(r.s)}>Mark done</button>
-                              )}
-                              <button className="text-slate-400 hover:text-slate-700 hover:underline disabled:opacity-50" disabled={busyId === r.s.id} onClick={() => onRelease(r.s)}>Release</button>
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <button
-                          className="btn btn-ghost text-xs disabled:opacity-50"
-                          disabled={busyId === r.s.id}
-                          onClick={() => onPickUp(r.s)}
-                        >
-                          {busyId === r.s.id ? '…' : 'Pick up'}
+                          <div className="hint mt-0.5">
+                            picked up {timeAgo(claim.claimed_at)}
+                            {claim.review_date ? ` · review ${fmtDate(claim.review_date)}` : ''}
+                            {' '}{expanded ? '▾' : '▸'}
+                          </div>
                         </button>
-                      )}
-                    </td>
-                  )}
-                  {actionsConfigured && (
-                    <td>
-                      {claim && deltas && deltas.length ? (
-                        <div className="text-xs text-slate-600 leading-relaxed" style={{ maxWidth: 240 }}>{deltas.join(' · ')}</div>
                       ) : (
-                        <span className="text-slate-300">—</span>
+                        <button className="btn btn-ghost text-xs" onClick={toggle}>{expanded ? 'Cancel' : 'Pick up'}</button>
                       )}
                     </td>
                   )}
@@ -449,11 +375,19 @@ export default function ActionQueueTab() {
                   <td><TrajectoryCell value={r.trajectory} /></td>
                   <td><ConfidenceChip value={r.confidence} /></td>
                 </tr>
+                {actionsConfigured && expanded && (
+                  <tr>
+                    <td colSpan={colCount} className="p-2 bg-white">
+                      <PickupPanel s={r.s} snapshotNow={metricSnapshot(r.s, hdcIdx, fatIdx, data.fatRows)} onClose={() => setExpandedId(null)} />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
                 );
               })
             ) : (
               <tr>
-                <td colSpan={actionsConfigured ? 9 : 7} className="text-center text-slate-400 py-6">No shows need a decision right now. ✓</td>
+                <td colSpan={actionsConfigured ? 8 : 7} className="text-center text-slate-400 py-6">No shows need a decision right now. ✓</td>
               </tr>
             )}
           </tbody>

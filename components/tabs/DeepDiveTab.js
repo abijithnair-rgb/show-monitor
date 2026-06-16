@@ -7,6 +7,8 @@ import { ACTION_META } from '@/lib/constants';
 import { esc, fmtDate, LANG_NAMES, num } from '@/lib/format';
 import { actionChip, agreeBadge, kpiGrid, hdcCard, contribBar, last10Table } from '@/lib/render';
 import { TrajectoryChart, RetentionChart, FailureDoughnut, AudienceSourceChart, RetentionTrendChart } from '@/components/deepdive/charts';
+import PickupPanel from '@/components/PickupPanel';
+import { snapshotFromData } from '@/lib/ownership';
 
 export default function DeepDiveTab() {
   const data = useStore((s) => s.data());
@@ -87,6 +89,9 @@ function DeepBody({ s, data }) {
     <div>
       <div className="flex items-center gap-2 flex-wrap mb-2" dangerouslySetInnerHTML={{ __html: headHtml }} />
       <div className={`banner ${recTone} mb-4`} style={{ display: 'block' }} dangerouslySetInnerHTML={{ __html: bannerHtml }} />
+
+      <PickupStatus s={s} data={data} />
+
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4" dangerouslySetInnerHTML={{ __html: kpiGrid(s, data, fobj) }} />
 
       {data.hdcRows && <div dangerouslySetInnerHTML={{ __html: hdcCard(hdc, s, data.hdcRows) }} />}
@@ -137,6 +142,19 @@ function DeepBody({ s, data }) {
       {data.retRows && <RetentionCard retRows={data.retRows} showId={s.id} language={s.language} data={data} />}
 
       {fobj && fobj.eps && fobj.eps.length > 0 && <div dangerouslySetInnerHTML={{ __html: last10Table(fobj.eps) }} />}
+    </div>
+  );
+}
+
+// Pick-up status for this show — the same panel used in the Action Queue, so the
+// owner, dates, and since-pickup deltas are visible (and actionable) here too.
+function PickupStatus({ s, data }) {
+  const configured = useStore((st) => st.actionsConfigured);
+  if (!configured) return null;
+  return (
+    <div className="mb-4">
+      <div className="font-semibold mb-2 text-sm">Action ownership</div>
+      <PickupPanel s={s} snapshotNow={snapshotFromData(s, data)} />
     </div>
   );
 }

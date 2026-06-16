@@ -65,9 +65,10 @@ const METRIC_GROUPS = [
   {
     title: 'Action Queue — shared ownership',
     metrics: [
-      ['Pick up / owner', 'Anyone can "pick up" an action in the Action Queue to claim it. The owner\'s name and the pickup date are shared across everyone using the tool (stored centrally, not per-browser), so the team can see who is working on what. Identity is a self-reported name (no login).'],
-      ['Mark done / Release', 'The owner can mark a picked-up action done (kept on the board with a done stamp) or release it back to the pool for someone else.'],
-      ['Since pickup', 'When an action is claimed, the show\'s key metrics (HDC rate, contribution %, success rate, users) are snapshotted. The "Since pickup" column then shows the change from that snapshot to the latest data — so the impact of the work is visible over time.'],
+      ['Pick up / owner', 'Anyone can "pick up" an action in the Action Queue to claim it. The "Pick up" button opens a panel under the show where you set an optional "actions to be taken by" date and a "to be reviewed on" date, and see the current numbers before confirming. The owner\'s name and dates are shared across everyone using the tool (stored centrally, not per-browser). Identity is a self-reported name (no login). The same panel appears in the Deep Dive.'],
+      ['Review due → top of queue', 'When a picked-up action\'s review date arrives (on or before today and not yet done), the show automatically floats to the top of the Action Queue with a "review due" flag, so reviews never get missed.'],
+      ['Mark done / Release', 'The owner can mark a picked-up action done (kept on the board with a done stamp) or release it back to the pool for someone else, and can edit the dates anytime.'],
+      ['Since pickup', 'When an action is claimed, the show\'s key metrics (HDC rate, contribution %, success rate, users) are snapshotted. The panel then shows the change from that snapshot to the latest data — so the impact of the work is visible over time.'],
     ],
   },
 ];

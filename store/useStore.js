@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { idbSet, idbGet, idbDel } from '@/lib/idb';
 import { sampleData } from '@/lib/sample';
 import { fetchSheets, fetchRemote, remoteStatus } from '@/lib/remote';
-import { fetchActions } from '@/lib/actions';
+import { fetchActions, claimAction, updateClaim, markDone, releaseAction } from '@/lib/actions';
 
 // Global app state (replaces the original mutable `state` object).
 export const useStore = create((set, get) => ({
@@ -138,6 +138,27 @@ export const useStore = create((set, get) => ({
   setUserName: async (name) => {
     set({ userName: String(name || '').trim() });
     await get().saveSettings();
+  },
+  // Thin ownership writes — call the API, patch the local map, throw on error so
+  // the UI can manage busy/error state. Each returns the updated claim.
+  claimShow: async (showId, by, snapshot, extra) => {
+    const { claim } = await claimAction(showId, by, snapshot, extra);
+    get().applyClaim(showId, claim);
+    return claim;
+  },
+  updateClaimDates: async (showId, fields) => {
+    const { claim } = await updateClaim(showId, fields);
+    get().applyClaim(showId, claim);
+    return claim;
+  },
+  doneShow: async (showId, by) => {
+    const { claim } = await markDone(showId, by);
+    get().applyClaim(showId, claim);
+    return claim;
+  },
+  releaseShow: async (showId) => {
+    await releaseAction(showId);
+    get().applyClaim(showId, null);
   },
 
   // ---- Google-Sheet auto-sync ----
