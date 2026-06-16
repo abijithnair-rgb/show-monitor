@@ -197,7 +197,9 @@ sr_cur AS (
     ROUND(SUM(cc.content_watch_hrs),1) AS content_watch_hrs
   FROM sr_spine sp
   LEFT JOIN content_daily cc ON cc.level=sp.level AND cc.segment=sp.segment
-    AND cc.date_ BETWEEN DATE_SUB(sp.report_date, INTERVAL 10 DAY) AND DATE_SUB(sp.report_date, INTERVAL 4 DAY)
+    -- window anchored on the RUN DAY (D-0 = report_date+1): run_day-10 .. run_day-4.
+    -- sp.report_date is the unshifted D-1, so that is report_date-9 .. report_date-3.
+    AND cc.date_ BETWEEN DATE_SUB(sp.report_date, INTERVAL 9 DAY) AND DATE_SUB(sp.report_date, INTERVAL 3 DAY)
   GROUP BY 1,2,3
 ),
 sr_prev AS (
@@ -205,7 +207,9 @@ sr_prev AS (
     SUM(cc.series_success) AS series_success, SUM(cc.series_fail) AS series_fail
   FROM sr_spine sp
   LEFT JOIN content_daily cc ON cc.level=sp.level AND cc.segment=sp.segment
-    AND cc.date_ BETWEEN DATE_SUB(sp.report_date, INTERVAL 17 DAY) AND DATE_SUB(sp.report_date, INTERVAL 11 DAY)
+    -- prior 7-day block to sr_cur, also run-day-anchored: run_day-17 .. run_day-11
+    -- = report_date-16 .. report_date-10.
+    AND cc.date_ BETWEEN DATE_SUB(sp.report_date, INTERVAL 16 DAY) AND DATE_SUB(sp.report_date, INTERVAL 10 DAY)
   GROUP BY 1,2,3
 ),
 content_final AS (
