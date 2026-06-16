@@ -17,7 +17,7 @@ export const useStore = create((set, get) => ({
   tab: 'data',
   filters: { language: '', category: '', bu: '', status: '', action: '', agreement: '' },
   search: '',
-  sortBy: 'lifecycle',
+  sortBy: 'users',
   deepDiveId: null,
   deepLang: '',
 
