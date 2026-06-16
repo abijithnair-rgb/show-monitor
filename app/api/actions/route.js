@@ -3,9 +3,14 @@
 // reached with plain fetch so we add no npm dependency and mirror the existing
 // /api/redash pattern (keys stay server-side, never sent to the browser).
 //
-// Env vars (auto-added when a Vercel KV store is linked to the project):
-//   KV_REST_API_URL   = https://<id>.upstash.io
-//   KV_REST_API_TOKEN = <token>
+// Env vars (auto-added when an Upstash Redis store is linked to the project).
+// The Vercel/Upstash integration may inject them under various names — and often
+// with a custom prefix chosen at setup time, e.g.:
+//   KV_REST_API_URL / KV_REST_API_TOKEN
+//   UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN
+//   <Prefix>_KV_REST_API_URL / <Prefix>_KV_REST_API_TOKEN   (e.g. New_experiment_storage_…)
+// So we resolve by SUFFIX: the first env var whose name ends in the REST URL /
+// write-token suffix wins. (Read-only tokens are ignored — we need writes.)
 // When unset the route reports { configured:false } and the UI hides the
 // pick-up controls — the rest of the tool is unaffected.
 //
@@ -17,8 +22,25 @@ export const dynamic = 'force-dynamic';
 
 const KEY = 'sm:actions';      // active experiments: field = show_id
 const HKEY = 'sm:history';     // concluded experiments: field = show_id → JSON array
-const url = () => process.env.KV_REST_API_URL;
-const token = () => process.env.KV_REST_API_TOKEN;
+
+// Find an env value by trying exact names first, then any key ending in a suffix.
+function envBySuffix(exact, suffixes) {
+  for (const name of exact) if (process.env[name]) return process.env[name];
+  for (const [name, val] of Object.entries(process.env)) {
+    if (!val) continue;
+    if (suffixes.some((sfx) => name.endsWith(sfx))) return val;
+  }
+  return undefined;
+}
+const url = () => envBySuffix(
+  ['KV_REST_API_URL', 'UPSTASH_REDIS_REST_URL'],
+  ['KV_REST_API_URL', 'UPSTASH_REDIS_REST_URL'],
+);
+const token = () => envBySuffix(
+  ['KV_REST_API_TOKEN', 'UPSTASH_REDIS_REST_TOKEN'],
+  // write token only — never the *READ_ONLY_TOKEN.
+  ['_KV_REST_API_TOKEN', 'KV_REST_API_TOKEN', 'UPSTASH_REDIS_REST_TOKEN'],
+);
 const configured = () => !!(url() && token());
 
 // Run one Redis command via the Upstash REST API: POST [cmd, ...args].
