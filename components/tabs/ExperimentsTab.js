@@ -82,6 +82,7 @@ export default function ExperimentsTab() {
               <th>Target</th>
               <th>Current</th>
               <th>Review date</th>
+              <th>Remark</th>
               <th>Verdict</th>
             </tr>
           </thead>
@@ -111,13 +112,16 @@ export default function ExperimentsTab() {
                       {claim.review_date ? fmtDate(claim.review_date) : <span className="text-slate-300">—</span>}
                       {due && <div className="hint" style={{ color: '#991b1b' }}>due</div>}
                     </td>
+                    <td>
+                      {claim.note ? <div className="text-xs text-slate-600" style={{ maxWidth: 200 }}>{claim.note}</div> : <span className="text-slate-300">—</span>}
+                    </td>
                     <td><span className={'chip ' + vm.chip}>{vm.label}</span></td>
                   </tr>
                 );
               })
             ) : (
               <tr>
-                <td colSpan={8} className="text-center text-slate-400 py-6">
+                <td colSpan={9} className="text-center text-slate-400 py-6">
                   {rows.length ? 'No experiments for this POC.' : 'No running experiments. Pick one up in the Action Queue.'}
                 </td>
               </tr>

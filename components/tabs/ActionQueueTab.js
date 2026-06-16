@@ -3,7 +3,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildModel, buildFatIndex } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
-import { metricSnapshot, reviewDue, evalVerdict, VERDICT_META, metricLabel } from '@/lib/ownership';
+import { metricSnapshot, reviewDue, evalVerdict, VERDICT_META, metricLabel, canAssign } from '@/lib/ownership';
 import { successRate } from '@/lib/metrics';
 import PickupPanel from '@/components/PickupPanel';
 import { fmtDate, weeksAgo, timeAgo, fmtPct, fmtNum, num, LANG_NAMES } from '@/lib/format';
@@ -119,7 +119,8 @@ export default function ActionQueueTab() {
   const setUserName = useStore((s) => s.setUserName);
 
   const [nameDraft, setNameDraft] = useState('');
-  const [expandedId, setExpandedId] = useState(null); // which show's pickup panel is open
+  // which show's panel is open, and in which mode: { id, assign }
+  const [expanded, setExpanded] = useState({ id: null, assign: false });
 
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('overdue');
@@ -128,8 +129,11 @@ export default function ActionQueueTab() {
   const [bu, setBu] = useState('');
   const [category, setCategory] = useState('');
   const [recommendation, setRecommendation] = useState('');
+  const [reason, setReason] = useState('');
   const [confidence, setConfidence] = useState('');
   const [fixArea, setFixArea] = useState('');
+
+  const iCanAssign = canAssign(userName);
 
   const model = useMemo(() => buildModel(data), [data]);
   const hdcIdx = useMemo(() => (data.hdcRows ? buildHdcIndex(data.hdcRows) : null), [data]);
@@ -177,10 +181,20 @@ export default function ActionQueueTab() {
           why = isExp ? whyText(s, decision) : (s.rec?.detail || ev.decision_reason || whyText(s, 'STOP'));
           if (reasons.length) why = `${why} · Also: ${reasons.join('; ')}.`;
         }
+
+        // Pinpoint reason TAGS (separate column + filter). Every row gets ≥1.
+        const reasonTags = [];
+        if (srLow) reasonTags.push('Success rate');
+        if (l5) reasonTags.push('L5 reach');
+        if (decision === 'STOP') reasonTags.push('Stop');
+        if (decision === 'PROMOTE') reasonTags.push('Promote');
+        if (decision === 'REVIEW') reasonTags.push('Insufficient data');
+
         return {
           s,
           decision,
           isExp,
+          reasonTags,
           derived: isExp && (!raw || raw === 'INSUFFICIENT_DATA' || raw === 'LOW_CONFIDENCE'),
           launch: ev.launch_date || null,
           trajectory: ev.recent_trajectory,
@@ -195,6 +209,7 @@ export default function ActionQueueTab() {
   const statuses = [...new Set(rows.map((r) => r.s.status).filter(Boolean))].sort();
   const bus = [...new Set(rows.map((r) => r.s.bu).filter(Boolean))].sort();
   const cats = [...new Set(rows.map((r) => r.s.category).filter(Boolean))].sort();
+  const reasonsList = [...new Set(rows.flatMap((r) => r.reasonTags))].sort();
 
   const decisionCount = (d) => rows.filter((r) => r.decision === d).length;
 
@@ -211,6 +226,7 @@ export default function ActionQueueTab() {
     if (bu && r.s.bu !== bu) return false;
     if (category && r.s.category !== category) return false;
     if (recommendation && r.decision !== recommendation) return false;
+    if (reason && !r.reasonTags.includes(reason)) return false;
     if (fixArea && String(r.s.fat?.mode || '').toUpperCase() !== fixArea) return false;
     if (confidence && String(r.confidence || '').toLowerCase() !== confidence) return false;
     if (search) {
@@ -241,7 +257,7 @@ export default function ActionQueueTab() {
   const dueCount = filtered.filter(attnOf).length;
 
   function clearFilters() {
-    setSearch(''); setLanguage(''); setStatus(''); setBu(''); setCategory(''); setRecommendation(''); setConfidence(''); setFixArea('');
+    setSearch(''); setLanguage(''); setStatus(''); setBu(''); setCategory(''); setRecommendation(''); setReason(''); setConfidence(''); setFixArea('');
   }
 
   return (
@@ -332,6 +348,7 @@ export default function ActionQueueTab() {
           <Dd label="BU" value={bu} set={setBu} options={bus} allLabel="All BUs" />
           <Dd label="CATEGORY" value={category} set={setCategory} options={cats} allLabel="All categories" />
           <Dd label="RECOMMENDATION" value={recommendation} set={setRecommendation} options={DECISION_ORDER} fmt={(d) => DECISION_LABELS[d] || d} allLabel="All recommendations" />
+          <Dd label="REASON" value={reason} set={setReason} options={reasonsList} allLabel="All reasons" />
           <Dd label="CONFIDENCE" value={confidence} set={setConfidence} options={['high', 'medium', 'low']} allLabel="All confidence" />
         </div>
       </div>
@@ -343,6 +360,7 @@ export default function ActionQueueTab() {
               <th>Show</th>
               <th>Launched</th>
               <th>Recommendation</th>
+              <th>Reason</th>
               <th>Why</th>
               {actionsConfigured && <th>Owner / status</th>}
               <th>Fix area</th>
@@ -359,9 +377,9 @@ export default function ActionQueueTab() {
                 const vMeta = verdict ? VERDICT_META[verdict] : null;
                 const due = reviewDue(claim);
                 const attn = claim && (due || verdict !== 'tracking');
-                const expanded = expandedId === r.s.id;
-                const colCount = actionsConfigured ? 8 : 7;
-                const toggle = (e) => { e.stopPropagation(); setExpandedId((v) => (v === r.s.id ? null : r.s.id)); };
+                const isExpanded = expanded.id === r.s.id;
+                const colCount = actionsConfigured ? 9 : 8;
+                const openPanel = (e, asAssign) => { e.stopPropagation(); setExpanded((v) => (v.id === r.s.id && v.assign === asAssign ? { id: null, assign: false } : { id: r.s.id, assign: asAssign })); };
                 return (
                 <Fragment key={r.s.id}>
                 <tr className={'row-clickable' + (attn ? ' bg-red-50' : '')} onClick={() => openDeepDive(r.s.id)}>
@@ -381,12 +399,17 @@ export default function ActionQueueTab() {
                     {r.derived && <div className="hint mt-1">ⓘ derived</div>}
                   </td>
                   <td>
-                    <div className="text-sm text-slate-600 truncate" style={{ maxWidth: 360 }} title={r.why}>{r.why}</div>
+                    <div className="flex flex-col gap-1">
+                      {r.reasonTags.map((t) => <span key={t} className="chip chip-light whitespace-nowrap">{t}</span>)}
+                    </div>
+                  </td>
+                  <td>
+                    <div className="text-sm text-slate-600 truncate" style={{ maxWidth: 320 }} title={r.why}>{r.why}</div>
                   </td>
                   {actionsConfigured && (
                     <td onClick={(e) => e.stopPropagation()}>
                       {claim ? (
-                        <button className="text-left text-xs hover:opacity-80" onClick={toggle}>
+                        <button className="text-left text-xs hover:opacity-80" onClick={(e) => openPanel(e, false)}>
                           <div className="flex items-center gap-1 flex-wrap">
                             {vMeta && <span className={'chip ' + vMeta.chip}>{vMeta.label}</span>}
                             <span className="font-medium text-slate-700">{claim.by}</span>
@@ -396,11 +419,14 @@ export default function ActionQueueTab() {
                           <div className="hint mt-0.5">
                             picked up {timeAgo(claim.claimed_at)}
                             {claim.review_date ? ` · review ${fmtDate(claim.review_date)}` : ''}
-                            {' '}{expanded ? '▾' : '▸'}
+                            {' '}{isExpanded ? '▾' : '▸'}
                           </div>
                         </button>
                       ) : (
-                        <button className="btn btn-ghost text-xs" onClick={toggle}>{expanded ? 'Cancel' : 'Pick up'}</button>
+                        <div className="flex gap-2">
+                          <button className="btn btn-ghost text-xs" onClick={(e) => openPanel(e, false)}>{isExpanded && !expanded.assign ? 'Cancel' : 'Pick up'}</button>
+                          {iCanAssign && <button className="btn btn-ghost text-xs" onClick={(e) => openPanel(e, true)}>{isExpanded && expanded.assign ? 'Cancel' : 'Assign'}</button>}
+                        </div>
                       )}
                     </td>
                   )}
@@ -408,10 +434,10 @@ export default function ActionQueueTab() {
                   <td><TrajectoryCell value={r.trajectory} /></td>
                   <td><ConfidenceChip value={r.confidence} /></td>
                 </tr>
-                {actionsConfigured && expanded && (
+                {actionsConfigured && isExpanded && (
                   <tr>
                     <td colSpan={colCount} className="p-2 bg-white">
-                      <PickupPanel s={r.s} snapshotNow={metricSnapshot(r.s, hdcIdx, fatIdx, data.fatRows)} onClose={() => setExpandedId(null)} />
+                      <PickupPanel s={r.s} snapshotNow={metricSnapshot(r.s, hdcIdx, fatIdx, data.fatRows)} assign={expanded.assign} onClose={() => setExpanded({ id: null, assign: false })} />
                     </td>
                   </tr>
                 )}
@@ -420,7 +446,7 @@ export default function ActionQueueTab() {
               })
             ) : (
               <tr>
-                <td colSpan={actionsConfigured ? 8 : 7} className="text-center text-slate-400 py-6">No shows need a decision right now. ✓</td>
+                <td colSpan={actionsConfigured ? 9 : 8} className="text-center text-slate-400 py-6">No shows need a decision right now. ✓</td>
               </tr>
             )}
           </tbody>

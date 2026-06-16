@@ -1,11 +1,11 @@
 'use client';
 import { useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { fmtDate, timeAgo } from '@/lib/format';
+import { fmtDate, timeAgo, num } from '@/lib/format';
 import {
   METRIC_OPTIONS, metricLabel, reviewDue, todayStr,
   evalVerdict, VERDICT_META, progressLine, sincePickupParts,
-  srTargetOptions, LABEL_BANDS, labelDefaultDir, makeLabelTarget, impliedTarget,
+  srTargetOptions, LABEL_BANDS, LABEL_MAX, labelDefaultDir, makeLabelTarget, impliedTarget,
   targetText,
 } from '@/lib/ownership';
 
@@ -48,9 +48,12 @@ function DateField({ label, value, set, readOnly }) {
 
 // Reusable ownership / experiment panel.
 //   readOnly=true  → summary only (Deep Dive): metric, target, verdict, progress.
-//   readOnly=false → interactive (Action Queue): pick-up form, then status with
+//   readOnly=false → interactive: pick-up (or assign) form, then status with
 //                    edit dates / override verdict / archive / release.
-export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false }) {
+//   assign=true    → the form assigns to another person (owner = assignee,
+//                    recorded with assigned_by = current user). Only offered to
+//                    users who canAssign().
+export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false, assign = false }) {
   const claim = useStore((st) => st.actions[String(s.id)]);
   const userName = useStore((st) => st.userName);
   const setUserName = useStore((st) => st.setUserName);
@@ -60,11 +63,13 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false 
   const releaseShow = useStore((st) => st.releaseShow);
 
   const [nameDraft, setNameDraft] = useState('');
+  const [assignee, setAssignee] = useState('');
   const [metric, setMetric] = useState('success_rate');
   const [srTargetId, setSrTargetId] = useState('');
   const [labelBand, setLabelBand] = useState('L0');
   const [labelDir, setLabelDir] = useState('inc');
-  const [labelPct, setLabelPct] = useState(30);
+  const [labelN, setLabelN] = useState(1);
+  const [remark, setRemark] = useState('');
   const [actionDate, setActionDate] = useState(claim?.action_date || '');
   const [reviewDate, setReviewDate] = useState(claim?.review_date || '');
   const [busy, setBusy] = useState(false);
@@ -78,6 +83,7 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false 
   const verdict = claim ? evalVerdict(claim, snapshotNow) : null;
   const vMeta = verdict ? VERDICT_META[verdict] : null;
   const due = reviewDue(claim);
+  const curBand = num(snapshotNow?.labels?.[labelBand]) || 0; // current count of the chosen band
 
   async function run(fn) {
     setErr(null); setBusy(true);
@@ -91,21 +97,29 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false 
       return (opts.find((o) => o.id === srTargetId) || null)?.target || null;
     }
     if (metric === 'label') {
-      if (!(Number(labelPct) > 0)) return null;
-      return makeLabelTarget(labelBand, labelDir, labelPct);
+      if (!(Number(labelN) >= 0)) return null;
+      // cumulative absolute target from the count at pickup.
+      return makeLabelTarget(labelBand, labelDir, labelN, curBand);
     }
     return impliedTarget(metric); // hook/pace/ending fix, stop, promote
   }
 
   function confirmPickup() {
-    const name = (userName || nameDraft).trim();
-    if (!name) { setErr('Enter your name first so the team knows who picked this up.'); return; }
+    const owner = assign ? assignee.trim() : (userName || nameDraft).trim();
+    if (assign) {
+      if (!owner) { setErr('Enter the name of the person to assign this to.'); return; }
+      if (owner.toLowerCase() === String(userName).toLowerCase()) { setErr("You can't assign to yourself — use Pick up instead."); return; }
+    } else if (!owner) {
+      setErr('Enter your name first so the team knows who picked this up.'); return;
+    }
     const target = buildTarget();
-    if (!target) { setErr(metric === 'success_rate' ? 'Choose a success-rate target.' : 'Set a valid target amount.'); return; }
-    if (!userName) setUserName(name);
+    if (!target) { setErr(metric === 'success_rate' ? 'Choose a success-rate target.' : 'Set a valid target.'); return; }
+    if (!assign && !userName) setUserName(owner);
     run(async () => {
-      await claimShow(s.id, name, snapshotNow, {
+      await claimShow(s.id, owner, snapshotNow, {
         metric, target,
+        assigned_by: assign ? userName : null,
+        note: remark.trim() || null,
         action_date: actionDate || null, review_date: reviewDate || null,
       });
       onClose?.();
@@ -123,11 +137,13 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false 
         {vMeta && <span className={'chip ' + vMeta.chip}>{vMeta.label}</span>}
         <span className="chip chip-purple">{metricLabel(claim.metric)}</span>
         <span className="font-medium text-slate-700">{claim.by}</span>
+        {claim.assigned_by && <span className="hint">assigned by {claim.assigned_by}</span>}
         {due && verdict === 'tracking' && <span className="chip chip-amber">review due</span>}
       </div>
       <div className="text-xs text-slate-600">
         {progressLine(claim, snapshotNow) || 'Manual action — no auto-tracked target.'}
       </div>
+      {claim.note && <div className="text-xs text-slate-500">Remark: {claim.note}</div>}
       <div className="hint">
         picked up {fmtDate(claim.claimed_at)} ({timeAgo(claim.claimed_at)})
         {claim.action_date ? ` · act by ${fmtDate(claim.action_date)}` : ''}
@@ -144,19 +160,30 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false 
         readOnly ? (
           <div className="text-slate-400">No active experiment on this show.</div>
         ) : (
-          // ---- Pick-up form ----
+          // ---- Pick-up / Assign form ----
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-slate-500">Picked up:</span>
-              <span className="chip chip-blue">today · {fmtDate(todayStr())}</span>
-              {!userName && (
-                <input value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} placeholder="your name"
-                  className="border border-slate-300 rounded-md px-2 py-1 text-xs w-32" />
+              {assign ? (
+                <>
+                  <span className="text-slate-500">Assign to:</span>
+                  <input value={assignee} onChange={(e) => setAssignee(e.target.value)} placeholder="person's name"
+                    className="border border-slate-300 rounded-md px-2 py-1 text-xs w-40" />
+                  <span className="hint">assigned by {userName || '—'}</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-slate-500">Picked up:</span>
+                  <span className="chip chip-blue">today · {fmtDate(todayStr())}</span>
+                  {!userName && (
+                    <input value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} placeholder="your name"
+                      className="border border-slate-300 rounded-md px-2 py-1 text-xs w-32" />
+                  )}
+                </>
               )}
             </div>
             <div className="flex gap-4 flex-wrap items-end">
               <label className="text-xs text-slate-500 flex flex-col gap-1">
-                Metric you're picking up
+                Metric
                 <select value={metric} onChange={(e) => onMetricChange(e.target.value)}
                   className="border border-slate-300 rounded-md px-2 py-1 text-sm">
                   {METRIC_OPTIONS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
@@ -178,7 +205,7 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false 
               {metric === 'label' && (
                 <div className="flex gap-2 items-end">
                   <label className="text-xs text-slate-500 flex flex-col gap-1">
-                    Label
+                    Label <span className="text-slate-400">(now: {curBand})</span>
                     <select value={labelBand} onChange={(e) => onBandChange(e.target.value)}
                       className="border border-slate-300 rounded-md px-2 py-1 text-sm">
                       {LABEL_BANDS.map((b) => <option key={b} value={b}>{b}</option>)}
@@ -193,11 +220,15 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false 
                     </select>
                   </label>
                   <label className="text-xs text-slate-500 flex flex-col gap-1">
-                    By (%)
-                    <input type="number" min="1" max="100" value={labelPct}
-                      onChange={(e) => setLabelPct(e.target.value)}
+                    By (count)
+                    <input type="number" min="0" max={LABEL_MAX} value={labelN}
+                      onChange={(e) => setLabelN(e.target.value)}
                       className="border border-slate-300 rounded-md px-2 py-1 text-sm w-20" />
                   </label>
+                  <div className="text-xs text-slate-500 pb-1.5">
+                    → target {labelBand} ={' '}
+                    <b>{labelDir === 'dec' ? Math.max(0, curBand - (Number(labelN) || 0)) : Math.min(LABEL_MAX, curBand + (Number(labelN) || 0))}</b>
+                  </div>
                 </div>
               )}
 
@@ -209,15 +240,23 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false 
               )}
             </div>
             {(metric === 'hook_fix' || metric === 'pace_fix' || metric === 'ending_fix') && (
-              <div className="hint">This is judged by the review date: reached if the dominant failure is no longer {metric.replace('_fix', '')} by then, otherwise failed.</div>
+              <div className="hint">Judged by the review date: reached if the dominant failure is no longer {metric.replace('_fix', '')} by then, otherwise failed.</div>
             )}
+            <label className="text-xs text-slate-500 flex flex-col gap-1">
+              Remark
+              <textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2}
+                placeholder="What you're trying / context for the team (optional)"
+                className="border border-slate-300 rounded-md px-2 py-1 text-sm resize-none" />
+            </label>
             <div className="flex gap-4 flex-wrap">
               <DateField label="Actions to be taken by" value={actionDate} set={setActionDate} />
               <DateField label="To be reviewed on" value={reviewDate} set={setReviewDate} />
             </div>
             <Numbers title="Current numbers (snapshot at pickup)" snap={snapshotNow} />
             <div className="flex gap-2">
-              <button className="btn btn-primary" disabled={busy} onClick={confirmPickup}>{busy ? 'Saving…' : 'Confirm pick up'}</button>
+              <button className="btn btn-primary" disabled={busy} onClick={confirmPickup}>
+                {busy ? 'Saving…' : assign ? 'Assign experiment' : 'Confirm pick up'}
+              </button>
               {onClose && <button className="btn btn-ghost" disabled={busy} onClick={onClose}>Cancel</button>}
             </div>
           </div>

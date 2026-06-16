@@ -145,6 +145,9 @@ export async function POST(req) {
       const claim = {
         show_id: showId,
         by,
+        // assigned_by: set when someone (an assigner) assigns this to `by`;
+        // null when the owner picked it up themselves.
+        assigned_by: body?.assigned_by ? String(body.assigned_by) : null,
         claimed_at: now,
         metric: body?.metric != null ? String(body.metric) : null,
         target: body?.target ?? null,

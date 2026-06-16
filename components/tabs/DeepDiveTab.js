@@ -8,7 +8,7 @@ import { esc, fmtDate, LANG_NAMES, num } from '@/lib/format';
 import { actionChip, agreeBadge, kpiGrid, hdcCard, contribBar, last10Table } from '@/lib/render';
 import { TrajectoryChart, RetentionChart, FailureDoughnut, AudienceSourceChart, RetentionTrendChart } from '@/components/deepdive/charts';
 import PickupPanel from '@/components/PickupPanel';
-import { snapshotFromData, metricLabel, VERDICT_META } from '@/lib/ownership';
+import { snapshotFromData, metricLabel, VERDICT_META, canAssign } from '@/lib/ownership';
 
 export default function DeepDiveTab() {
   const data = useStore((s) => s.data());
@@ -74,6 +74,14 @@ function DeepBody({ s, data }) {
   const hdc = data.hdcRows ? buildHdcIndex(data.hdcRows).get(s.id) : null;
   const recTone = { red: 'banner-red', amber: 'banner-amber', green: 'banner-yellow', grey: 'banner-yellow' }[(ACTION_META[s.rec.key] || {}).tone] || 'banner-yellow';
 
+  // Experiment launcher state (top-right "Run experiment" / "Assign"). Shared
+  // between the header button and the form rendered below the banner.
+  const actionsConfigured = useStore((st) => st.actionsConfigured);
+  const claim = useStore((st) => st.actions[String(s.id)]);
+  const userName = useStore((st) => st.userName);
+  const [expOpen, setExpOpen] = useState(null); // null | 'pickup' | 'assign'
+  const canLaunch = actionsConfigured && !claim;
+
   const headHtml = `<span class="text-2xl font-bold">${esc(s.title)}</span>
     <span class="chip chip-blue">${esc(LANG_NAMES[s.language] || s.language)}</span>
     ${s.category ? `<span class="chip chip-purple">${esc(s.category)}</span>` : ''}
@@ -87,10 +95,30 @@ function DeepBody({ s, data }) {
 
   return (
     <div>
-      <div className="flex items-center gap-2 flex-wrap mb-2" dangerouslySetInnerHTML={{ __html: headHtml }} />
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div className="flex items-center gap-2 flex-wrap" dangerouslySetInnerHTML={{ __html: headHtml }} />
+        {canLaunch && !expOpen && (
+          <div className="flex gap-2 shrink-0">
+            <button className="btn btn-primary text-sm" onClick={() => setExpOpen('pickup')}>Run experiment</button>
+            {canAssign(userName) && <button className="btn btn-ghost text-sm" onClick={() => setExpOpen('assign')}>Assign</button>}
+          </div>
+        )}
+      </div>
       <div className={`banner ${recTone} mb-4`} style={{ display: 'block' }} dangerouslySetInnerHTML={{ __html: bannerHtml }} />
 
-      <PickupStatus s={s} data={data} />
+      {/* Active experiment summary (read-only) or the launched form. */}
+      {actionsConfigured && claim && (
+        <div className="mb-4">
+          <div className="font-semibold mb-2 text-sm">Active experiment</div>
+          <PickupPanel s={s} snapshotNow={snapshotFromData(s, data)} readOnly />
+        </div>
+      )}
+      {canLaunch && expOpen && (
+        <div className="mb-4">
+          <div className="font-semibold mb-2 text-sm">{expOpen === 'assign' ? 'Assign experiment' : 'Run experiment'}</div>
+          <PickupPanel s={s} snapshotNow={snapshotFromData(s, data)} assign={expOpen === 'assign'} onClose={() => setExpOpen(null)} />
+        </div>
+      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4" dangerouslySetInnerHTML={{ __html: kpiGrid(s, data, fobj) }} />
 
@@ -144,20 +172,6 @@ function DeepBody({ s, data }) {
       {fobj && fobj.eps && fobj.eps.length > 0 && <div dangerouslySetInnerHTML={{ __html: last10Table(fobj.eps) }} />}
 
       <ExperimentHistory s={s} />
-    </div>
-  );
-}
-
-// Active experiment summary — READ-ONLY (actions are taken in the Action Queue).
-// Shown near the top so the current status is visible at a glance.
-function PickupStatus({ s, data }) {
-  const configured = useStore((st) => st.actionsConfigured);
-  const claim = useStore((st) => st.actions[String(s.id)]);
-  if (!configured || !claim) return null;
-  return (
-    <div className="mb-4">
-      <div className="font-semibold mb-2 text-sm">Active experiment</div>
-      <PickupPanel s={s} snapshotNow={snapshotFromData(s, data)} readOnly />
     </div>
   );
 }
