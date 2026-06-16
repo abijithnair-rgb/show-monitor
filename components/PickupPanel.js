@@ -238,7 +238,7 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
               )}
             </div>
             {metric === 'label' && (
-              <div className="hint">Counts the {labelBand} videos this show publishes between pickup and the review date (cumulative).</div>
+              <div className="hint">Counts the {labelBand} videos this show publishes between the "actions to be taken by" date and the review date (cumulative) — giving the POC time to act first.</div>
             )}
             {(metric === 'hook_fix' || metric === 'pace_fix' || metric === 'ending_fix') && (
               <div className="hint">Judged by the review date: reached if the dominant failure is no longer {metric.replace('_fix', '')} by then, otherwise failed.</div>
