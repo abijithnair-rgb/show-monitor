@@ -14,6 +14,7 @@ import {
 } from 'chart.js';
 import { num, pickv } from '@/lib/format';
 import { globalBars } from '@/lib/metrics';
+import { AUDIENCE_SOURCES } from '@/lib/model';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Tooltip, Legend, Filler);
 
@@ -59,6 +60,48 @@ export function RetentionChart({ fs }) {
         datasets: [{ data: [r1(h), r1(cumMid), r1(cumEnd)], backgroundColor: ['#F4A261', '#D97706', '#1D4ED8'] }],
       }}
       options={{ plugins: { legend: { display: false } }, scales: { y: { max: 100, ticks: { callback: (v) => v + '%' } } }, maintainAspectRatio: false }}
+    />
+  );
+}
+
+// Daily audience by acquisition source — one line per source over ~30 days.
+// metric = 'views' (play events) or 'users' (unique viewers).
+const AUD_STYLE = {
+  organic:  { label: 'Organic',  color: '#2A9D8F' },
+  push:     { label: 'Push',     color: '#1D4ED8' },
+  moe:      { label: 'MoEngage', color: '#7C3AED' },
+  whatsapp: { label: 'WhatsApp', color: '#F4A261' },
+};
+export function AudienceSourceChart({ aud, metric = 'views' }) {
+  const series = aud[metric] || aud.views;
+  // Drop sources with no activity across the whole window to keep the chart clean.
+  const active = AUDIENCE_SOURCES.filter((s) => (series[s] || []).some((v) => v > 0));
+  const shortDate = (d) => { const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(d); return m ? `${m[2]}/${m[1]}` : d; };
+  return (
+    <Line
+      data={{
+        labels: aud.dates.map(shortDate),
+        datasets: (active.length ? active : AUDIENCE_SOURCES).map((s) => ({
+          label: AUD_STYLE[s].label,
+          data: series[s],
+          borderColor: AUD_STYLE[s].color,
+          backgroundColor: AUD_STYLE[s].color,
+          tension: 0.3,
+          pointRadius: 0,
+          pointHoverRadius: 3,
+          borderWidth: 2,
+          spanGaps: true,
+        })),
+      }}
+      options={{
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { display: true, labels: { boxWidth: 10, font: { size: 10 } } } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 10, font: { size: 9 } } },
+          y: { beginAtZero: true, ticks: { precision: 0 } },
+        },
+        maintainAspectRatio: false,
+      }}
     />
   );
 }

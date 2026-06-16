@@ -1,12 +1,12 @@
 'use client';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { buildModel, buildFatIndex } from '@/lib/model';
+import { buildModel, buildFatIndex, buildAudienceIndex } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
 import { ACTION_META } from '@/lib/constants';
 import { esc, fmtDate, LANG_NAMES } from '@/lib/format';
 import { actionChip, agreeBadge, kpiGrid, hdcCard, contribBar, last10Table } from '@/lib/render';
-import { TrajectoryChart, RetentionChart, FailureDoughnut } from '@/components/deepdive/charts';
+import { TrajectoryChart, RetentionChart, FailureDoughnut, AudienceSourceChart } from '@/components/deepdive/charts';
 
 export default function DeepDiveTab() {
   const data = useStore((s) => s.data());
@@ -132,7 +132,44 @@ function DeepBody({ s, data }) {
         )}
       </div>
 
+      {data.audRows && <AudienceCard aud={buildAudienceIndex(data.audRows).get(s.id)} />}
+
       {fobj && fobj.eps && fobj.eps.length > 0 && <div dangerouslySetInnerHTML={{ __html: last10Table(fobj.eps) }} />}
+    </div>
+  );
+}
+
+function AudienceCard({ aud }) {
+  const [metric, setMetric] = useState('views');
+  const hasData = aud && aud.dates && aud.dates.length > 0;
+  return (
+    <div className="card p-4 mb-4">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+        <div className="font-semibold">Daily audience by source — where viewers came from (last 30 days)</div>
+        <div className="inline-flex rounded-md border border-slate-300 overflow-hidden text-xs">
+          {[['views', 'Views'], ['users', 'Unique viewers']].map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => setMetric(k)}
+              className={`px-3 py-1.5 ${metric === k ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {hasData ? (
+        <>
+          <div style={{ position: 'relative', height: 260 }}>
+            <AudienceSourceChart aud={aud} metric={metric} />
+          </div>
+          <div className="hint mt-1">
+            {metric === 'views' ? 'Daily video-play count' : 'Daily unique viewers'} per acquisition source — Organic, Push, MoEngage, WhatsApp. Tracks how each channel feeds this show day to day.
+          </div>
+        </>
+      ) : (
+        <div className="text-sm text-slate-400">No daily audience data for this show.</div>
+      )}
     </div>
   );
 }

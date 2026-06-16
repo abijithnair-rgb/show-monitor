@@ -1698,4 +1698,50 @@ LEFT JOIN bu_mapping bm
 WHERE cs.language IN ('hi','ta','te','ml','kn')
 ) t
 
+UNION ALL
+SELECT 'audience' AS dataset, TO_JSON_STRING(t) AS row_json FROM (
+-- Per-show DAILY audience by acquisition source, last 30 days (D-1 .. D-30 IST).
+-- Powers the Deep Dive "Daily audience by source" chart. Each row = one
+-- (show, day, source) with view count (play events) and unique viewers.
+-- Source taxonomy mirrors the Daily RCA: push=from_notification,
+-- moe=from_moe_notification, whatsapp=sharing/anything whatsapp, else organic.
+WITH aud_plays AS (
+  SELECT
+    cs.show_id,
+    DATE(p.timestamp, 'Asia/Kolkata') AS date_,
+    CASE
+      WHEN p.source_screen = 'from_notification'     THEN 'push'
+      WHEN p.source_screen = 'from_moe_notification' THEN 'moe'
+      WHEN p.source_screen = 'sharing'               THEN 'whatsapp'
+      WHEN LOWER(COALESCE(p.source_screen, ''))  LIKE '%whatsapp%' THEN 'whatsapp'
+      WHEN LOWER(COALESCE(p.source_section, '')) LIKE '%whatsapp%' THEN 'whatsapp'
+      ELSE 'organic'
+    END AS source_type,
+    p.firebase_uid
+  FROM `seekho-c084b.content_recommendation.video_play_combined` p
+  JOIN `seekho-c084b.seekho.courses_series` cs
+    ON SAFE_CAST(p.series_id AS INT64) = cs.id
+  WHERE DATE(p.timestamp, 'Asia/Kolkata')
+        BETWEEN DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 30 DAY)
+            AND DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 1 DAY)
+    AND p.watchtime IS NOT NULL AND p.watchtime > 0
+    AND p.package_name IN (
+      'com.seekho.android', 'com.seekho.ios',
+      'com.nerchuko.android', 'com.arivu.android',
+      'com.kalike.android', 'com.vidhya.android'
+    )
+    AND cs.language IN ('hi','ta','te','ml','kn')
+    AND cs.state IN ('live','expired')
+)
+SELECT
+  show_id,
+  CAST(date_ AS STRING)        AS date_,
+  source_type,
+  COUNT(*)                     AS views,
+  COUNT(DISTINCT firebase_uid) AS users
+FROM aud_plays
+GROUP BY 1, 2, 3
+ORDER BY show_id, date_, source_type
+) t
+
 ORDER BY dataset
