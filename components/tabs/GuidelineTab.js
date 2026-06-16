@@ -17,11 +17,11 @@ const METRIC_GROUPS = [
     title: 'Fatigue lens — Content Fatigue Monitor',
     metrics: [
       ['Fatigue score', 'Computed over the last 7 days (videos approved today-8 to today-2), z-scored within language, weighted Comp-efficiency Δ H123 60% + Category-reach Δ 20% + 6-day return 20%. Higher = healthier (0 ≈ language avg). Zone chip: green = top 65%, yellow = next 20%, red = bottom 15% within language.'],
-      ['Success rate (last 7, settled H123)', '% of successful videos among the last 7 whose H123 window has fully settled — approved 4–10 days ago (past the 72h H123 window + 1 buffer day) with H123 data. Success = content_performance.status=1, or (status null) H123 completion ≥ target. Denominator capped at 7.'],
+      ['Success rate (last 7, settled H123)', 'Of the last 7 videos with a settled success flag (approved 4–10 days ago, past the 72h H123 window + 1 buffer day), the share that succeeded. SR = status=1 ÷ (status=1 + status=0); videos whose content_performance.status is still NULL (not yet evaluated) are excluded entirely — no completion-rate fallback. Denominator capped at 7. Same definition as the Daily RCA.'],
       ['Category reach %', "Show's D0 viewers ÷ the category's paid daily-active users, averaged over the last 4 weeks. How much of the category audience each episode pulls."],
       ['6-day return rate', 'Of all show-user-days, the share where the same user returned to the show within the next 6 days (Duolingo model). The last 6 days of the window are excluded to fix right-censoring.'],
       ['Saturation', 'Avg episodes a user watched ÷ episodes published that week, averaged over 4 weeks. >100% means users binge / re-watch.'],
-      ['Failure mode (Hook / Pace / Ending)', 'Per episode, the weakest retention checkpoint when it is also below the language P25: HOOK (<30s), PACE (50% mark), ENDING (≥70% completion), else OK. The show\'s dominant mode is the most frequent across the last 10 evaluable episodes.'],
+      ['Failure mode (Hook / Pace / Ending)', 'In the Last-10 table, read off the same cumulative retention and per-video-length floors the cells show: the checkpoint with the biggest shortfall below its floor wins — HOOK (30s), PACE (50% mark), ENDING (70% completion); if all three clear their floor → OK. The show\'s dominant mode is the most frequent across the last 10 evaluable episodes.'],
       ['Retention checkpoints (H123)', 'Hook = share of H123 viewers who watched ≥30s; Mid = share reaching the 50% mark; End = share completing ≥70% (Seekho\'s "completed" bar).'],
       ['Completion efficiency H123', 'H123 completion ÷ the per-video target completion × 100. 100% = hit target.'],
     ],
@@ -42,6 +42,24 @@ const METRIC_GROUPS = [
       ['Most-common label (7d)', 'The label appearing on the most days over the window; ties break toward the worse (higher) label.'],
       ['Labels L0–L6', 'L0 HDC (view+CR within 24h) · L1 high reach, weak CR · L2 strong CR + scale (>p75 views) · L3 above day×language median (p50) · L4 between p25–p50 · L5 below p25 · L6 uncategorised. Lower is better.'],
       ['BU (business unit)', 'Each show\'s category mapped to one of three units — Awareness, Income, or Skill — via the category→BU mapping. Available as a filter in Explorer and Action Queue.'],
+    ],
+  },
+  {
+    title: 'Deep Dive — audience & return behaviour',
+    metrics: [
+      ['Daily audience by surface', 'Per-show daily chart (last 30 days) of where in the app each play started — Home, Player autoplay, Search, Category, Push, Show page, Library, New & Hot, Learning journey, AI chat, Shared, Other, Unknown. Surface is the in-app launch point, NOT an acquisition channel. Toggle between Views (5-second-qualified play events) and Unique viewers (distinct firebase_uids). Scoped to paid + organic plays on the 6 main-language apps.'],
+      ['Return rate by viewer recency (NURR/CURR/RURR/SURR)', 'Weekly trend (last 7 reference days) of next-day return among PAYING users: of those who watched the show on a reference day, the share who came back the next day — split by how recently they had previously watched the SAME show. NURR = New (no watch in prior 60d) · CURR = Current (1–6d ago) · RURR = Reactivated (7–29d) · SURR = Resurrected (30–60d). The optional dashed overlay is each state\'s language median for reference.'],
+    ],
+  },
+  {
+    title: 'Daily RCA — morning content RCA',
+    metrics: [
+      ['Report dating (D-0 / D-1 / D-2)', 'A row is dated by the RUN day (D-0, the morning it represents). Within it: paid DAU is the prior day (D-1); HDC=L0 and the L0–L6 label split are D-2 (the latest fully-settled 24h window, in hdc_report_date); success rate is the D-10→D-4 settled cohort.'],
+      ['Segments', 'Computed at three levels: TOTAL (all of hi+ta+te+ml+kn), per LANGUAGE, and — for Hindi only — per BU (Awareness / Income / Skill). Plus per-SHOW triage rows for Hindi.'],
+      ['HDC (L0) movement', 'Daily HDC count and L0 rate vs the trailing 7-day average (Δ in percentage points), plus the 7-day HDC contribution (L0 ÷ supply) and the L4+L5 tail share.'],
+      ['Paid DAU movement', 'Daily paid DAU with signed % moves vs the 7-day average, day-over-day, and same-day-last-week, plus a verdict (REAL_DROP / soft_drop / normal / …) and the drop drivers — source (organic/push/MoEngage/WhatsApp), post-payment cohort, top falling surfaces, worst hour.'],
+      ['HDC population (paid + organic)', 'Hindi HDC counts PAID users only; Telugu/Tamil/Kannada/Malayalam count ALL organic users. Organic = excludes notification/share-sourced plays. View caps: hi 1500 / te 500 / ta 330 / kn 200 / ml 200; L2 view gate >1000 (hi) else p75.'],
+      ['Hindi show triage', 'Trailing-7d per-show flags vs the show\'s BU: poor L0% (hit-rate below BU), high L4+L5% (heavy low-view tail), and supply gap vs the show\'s frequency target — each with a concrete recommendation.'],
     ],
   },
 ];
