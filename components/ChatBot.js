@@ -103,6 +103,17 @@ export default function ChatBot() {
   const [peek, setPeek] = useState(null);
   const peekIdx = useRef(0);
   const scrollRef = useRef(null);
+  const inputRef = useRef(null);
+
+  // Auto-grow the input textarea with its content (1 line → up to ~6 lines).
+  function autosize(el) {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+  }
+  useEffect(() => {
+    autosize(inputRef.current);
+  }, [input]);
 
   // periodic peek-out greetings (first at 8s, then every 2 min; visible 7s each)
   useEffect(() => {
@@ -229,7 +240,7 @@ export default function ChatBot() {
       {open && (
         <div
           className="fixed bottom-5 right-5 z-[60] flex flex-col bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden"
-          style={{ width: 400, height: 600, maxWidth: 'calc(100vw - 2rem)', maxHeight: 'calc(100vh - 2rem)' }}
+          style={{ width: 480, height: 720, maxWidth: 'calc(100vw - 2rem)', maxHeight: 'calc(100vh - 2rem)' }}
         >
           {/* header */}
           <div className="flex items-center gap-2 px-3 py-2.5 text-white" style={{ background: '#1D9E75' }}>
@@ -296,19 +307,28 @@ export default function ChatBot() {
           {/* input */}
           <form
             onSubmit={(e) => { e.preventDefault(); send(); }}
-            className="flex items-center gap-2 border-t border-slate-200 p-2.5 bg-white"
+            className="flex items-end gap-2 border-t border-slate-200 p-2.5 bg-white"
           >
-            <input
+            <textarea
+              ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask about your shows…"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              rows={1}
+              placeholder="Ask about your shows…  (Shift+Enter for a new line)"
               disabled={loading}
-              className="flex-1 border border-slate-300 rounded-full px-3.5 py-2 text-[13px] focus:outline-none focus:border-theme-solid disabled:opacity-60"
+              className="flex-1 resize-none border border-slate-300 rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed focus:outline-none focus:border-theme-solid disabled:opacity-60 overflow-y-auto"
+              style={{ maxHeight: 140 }}
             />
             <button
               type="submit"
               disabled={loading || !input.trim()}
-              className="text-white rounded-full w-9 h-9 flex items-center justify-center disabled:opacity-40 transition"
+              className="text-white rounded-full w-9 h-9 flex items-center justify-center disabled:opacity-40 transition shrink-0"
               style={{ background: '#1D9E75' }}
               aria-label="Send"
             >
