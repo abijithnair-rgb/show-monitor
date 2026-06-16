@@ -10,6 +10,59 @@ import { TrajectoryChart, RetentionChart, FailureDoughnut, AudienceSourceChart, 
 import PickupPanel from '@/components/PickupPanel';
 import { snapshotFromData, currentFor, metricLabel, VERDICT_META, canAssign } from '@/lib/ownership';
 
+// Searchable show picker — a text box that filters a dropdown list by title,
+// category or show_id. Click a result (or the only match) to select.
+function ShowSearchSelect({ shows, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const selected = shows.find((sh) => sh.id === value);
+  const query = q.trim().toLowerCase();
+  const matches = query
+    ? shows.filter((sh) =>
+        String(sh.title || '').toLowerCase().includes(query) ||
+        String(sh.category || '').toLowerCase().includes(query) ||
+        String(sh.id).includes(query))
+    : shows;
+
+  return (
+    <div className="relative">
+      <input
+        className="border border-slate-300 rounded-md px-3 py-2 text-sm w-full"
+        placeholder="Search title, category or id…"
+        value={open ? q : (selected ? selected.title : '')}
+        onFocus={() => { setOpen(true); setQ(''); }}
+        onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {open && (
+        <div className="absolute z-30 mt-1 w-full max-h-72 overflow-y-auto bg-white border border-slate-200 rounded-md shadow-lg">
+          {value && (
+            <button type="button" className="w-full text-left px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-50 border-b border-slate-100"
+              onMouseDown={(e) => { e.preventDefault(); onChange(null); setOpen(false); }}>
+              Clear selection
+            </button>
+          )}
+          {matches.length ? (
+            matches.slice(0, 100).map((sh) => (
+              <button
+                key={sh.id}
+                type="button"
+                className={'w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center justify-between gap-2 ' + (sh.id === value ? 'bg-slate-50 font-medium' : '')}
+                onMouseDown={(e) => { e.preventDefault(); onChange(sh.id); setOpen(false); }}
+              >
+                <span className="truncate">{sh.title || `#${sh.id}`}</span>
+                <span className="text-[11px] text-slate-400 shrink-0">{(LANG_NAMES[sh.language] || sh.language || '')}{sh.category ? ' · ' + sh.category : ''}</span>
+              </button>
+            ))
+          ) : (
+            <div className="px-3 py-2 text-sm text-slate-400">No shows match “{q}”.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DeepDiveTab() {
   const data = useStore((s) => s.data());
   const deepLang = useStore((s) => s.deepLang);
@@ -44,12 +97,7 @@ export default function DeepDiveTab() {
       </label>
       <label className="text-xs text-slate-500 flex flex-col gap-1 flex-1 max-w-md">
         Show
-        <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={deepDiveId || ''} onChange={(e) => setDeepDiveId(e.target.value || null)}>
-          <option value="">Choose a show…</option>
-          {shows.map((sh) => (
-            <option key={sh.id} value={sh.id}>{sh.title}</option>
-          ))}
-        </select>
+        <ShowSearchSelect shows={shows} value={deepDiveId || null} onChange={(id) => setDeepDiveId(id)} />
       </label>
     </div>
   );
