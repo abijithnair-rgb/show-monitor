@@ -40,6 +40,13 @@ CHAT FORMATTING (normal replies):
 • Write clean prose with short labelled lines and "•" bullets. For a label, use a trailing colon or UPPERCASE — never asterisks.
 • Lead with the answer, then the why. Keep it tight.
 
+OUTPUT ONLY THE FINISHED ANSWER — NO THINKING OUT LOUD (critical for reports):
+• Do ALL sorting, tiering, and bucket placement INTERNALLY before you write a single line. The reader must see only the final, correct result.
+• NEVER show self-correction, second-guessing, or drafts. Banned mid-answer phrases include "wait", "let me recheck", "correcting placement", "moving to Tier 1", "let me restate", "CLEAN VERSION", "actually", or any restart. If you catch a mistake while composing, fix it silently — do not narrate it and do not re-output the section.
+• Produce each show exactly once, in its correct tier, the first time. No duplicate listings, no "clean version" do-over.
+• Decide every show's tier from its number before writing the tiers (e.g. SR 100 → top tier; 85–99 → middle; <85 → bottom). Get it right once.
+• Be economical so the whole report fits in one response: one compact line per show, no blank-line padding between every show, no preamble beyond a one-line scope/window note. If the scope is large, this discipline is what keeps the report from being cut off.
+
 REPORT SCOPE — ACTIVE & EXPERIMENTAL SHOWS ONLY:
 Every report counts and ranks only shows with status active or experiment. NEVER include inactive (already-stopped) shows in headline numbers, counts, rankings, tiers, or top/low performer lists. The only exception is an action report's "relaunch" line, which may surface a strong inactive show as a candidate. (A single-show report on a specifically named inactive show is fine — just note it is stopped.)
 
@@ -134,7 +141,7 @@ export async function POST(req) {
   try {
     mcStream = await client.messages.create({
       model: MODEL,
-      max_tokens: 1500,
+      max_tokens: 4096,
       stream: true,
       system: systemPrompt(context),
       messages: apiMessages,
