@@ -14,7 +14,7 @@ import {
 } from 'chart.js';
 import { num, pickv } from '@/lib/format';
 import { globalBars } from '@/lib/metrics';
-import { AUDIENCE_SURFACE_STYLE } from '@/lib/model';
+import { AUDIENCE_SURFACE_STYLE, RETENTION_STATES } from '@/lib/model';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Tooltip, Legend, Filler);
 
@@ -102,6 +102,42 @@ export function AudienceSourceChart({ aud, metric = 'views' }) {
           x: { ticks: { maxTicksLimit: 10, font: { size: 9 } } },
           y: { beginAtZero: true, ticks: { precision: 0 } },
         },
+        maintainAspectRatio: false,
+      }}
+    />
+  );
+}
+
+// Next-day return rate by viewer-recency state (NURR/CURR/RURR/SURR) — a bar
+// per state with its return %, base size shown in the tooltip.
+export function RetentionRatesChart({ ret }) {
+  const states = RETENTION_STATES;
+  const pct = (k) => num(ret[k + '_pct']);
+  const base = (k) => num(ret[k + '_base']);
+  return (
+    <Bar
+      data={{
+        labels: states.map((s) => s.label),
+        datasets: [{
+          data: states.map((s) => pct(s.key)),
+          backgroundColor: states.map((s) => s.color),
+          borderRadius: 4,
+        }],
+      }}
+      options={{
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const s = states[ctx.dataIndex];
+                const b = base(s.key);
+                return `${ctx.parsed.y}% returned next day · base ${b != null ? b.toLocaleString() : '—'} (${s.desc})`;
+              },
+            },
+          },
+        },
+        scales: { y: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + '%' } } },
         maintainAspectRatio: false,
       }}
     />

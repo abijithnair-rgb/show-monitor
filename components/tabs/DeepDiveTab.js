@@ -1,12 +1,12 @@
 'use client';
 import { useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { buildModel, buildFatIndex, buildAudienceIndex } from '@/lib/model';
+import { buildModel, buildFatIndex, buildAudienceIndex, buildRetentionIndex, RETENTION_STATES } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
 import { ACTION_META } from '@/lib/constants';
-import { esc, fmtDate, LANG_NAMES } from '@/lib/format';
+import { esc, fmtDate, LANG_NAMES, num } from '@/lib/format';
 import { actionChip, agreeBadge, kpiGrid, hdcCard, contribBar, last10Table } from '@/lib/render';
-import { TrajectoryChart, RetentionChart, FailureDoughnut, AudienceSourceChart } from '@/components/deepdive/charts';
+import { TrajectoryChart, RetentionChart, FailureDoughnut, AudienceSourceChart, RetentionRatesChart } from '@/components/deepdive/charts';
 
 export default function DeepDiveTab() {
   const data = useStore((s) => s.data());
@@ -134,6 +134,8 @@ function DeepBody({ s, data }) {
 
       {data.audRows && <AudienceCard aud={buildAudienceIndex(data.audRows).get(s.id)} />}
 
+      {data.retRows && <RetentionCard ret={buildRetentionIndex(data.retRows).get(s.id)} />}
+
       {fobj && fobj.eps && fobj.eps.length > 0 && <div dangerouslySetInnerHTML={{ __html: last10Table(fobj.eps) }} />}
     </div>
   );
@@ -169,6 +171,43 @@ function AudienceCard({ aud }) {
         </>
       ) : (
         <div className="text-sm text-slate-400">No daily audience data for this show.</div>
+      )}
+    </div>
+  );
+}
+
+function RetentionCard({ ret }) {
+  const hasData = ret && RETENTION_STATES.some((s) => num(ret[s.key + '_pct']) != null);
+  return (
+    <div className="card p-4 mb-4">
+      <div className="font-semibold mb-2">Next-day return rate by viewer recency (paying users)</div>
+      {hasData ? (
+        <>
+          <div style={{ position: 'relative', height: 240 }}>
+            <RetentionRatesChart ret={ret} />
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
+            {RETENTION_STATES.map((s) => {
+              const pct = num(ret[s.key + '_pct']);
+              const base = num(ret[s.key + '_base']);
+              return (
+                <div key={s.key} className="rounded-md border border-slate-200 px-2 py-1.5">
+                  <div className="text-xs text-slate-500 flex items-center gap-1">
+                    <span className="inline-block w-2 h-2 rounded-full" style={{ background: s.color }} />
+                    {s.label}
+                  </div>
+                  <div className="text-lg font-semibold">{pct != null ? pct + '%' : '—'}</div>
+                  <div className="hint">base {base != null ? base.toLocaleString() : '—'}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="hint mt-2">
+            Of the paying users who watched this show on the reference day (D-2), the share who returned to it the next day (D-1) — split by how recently they had previously watched: New (no watch in 60d), Current (1–6d ago), Reactivated (7–29d), Resurrected (30–60d).
+          </div>
+        </>
+      ) : (
+        <div className="text-sm text-slate-400">No return-rate data for this show.</div>
       )}
     </div>
   );
