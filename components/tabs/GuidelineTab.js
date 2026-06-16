@@ -65,10 +65,11 @@ const METRIC_GROUPS = [
   {
     title: 'Action Queue — shared ownership',
     metrics: [
-      ['Pick up / owner', 'Anyone can "pick up" an action in the Action Queue to claim it. The "Pick up" button opens a panel under the show where you set an optional "actions to be taken by" date and a "to be reviewed on" date, and see the current numbers before confirming. The owner\'s name and dates are shared across everyone using the tool (stored centrally, not per-browser). Identity is a self-reported name (no login). The same panel appears in the Deep Dive.'],
-      ['Review due → top of queue', 'When a picked-up action\'s review date arrives (on or before today and not yet done), the show automatically floats to the top of the Action Queue with a "review due" flag, so reviews never get missed.'],
-      ['Mark done / Release', 'The owner can mark a picked-up action done (kept on the board with a done stamp) or release it back to the pool for someone else, and can edit the dates anytime.'],
-      ['Since pickup', 'When an action is claimed, the show\'s key metrics (HDC rate, contribution %, success rate, users) are snapshotted. The panel then shows the change from that snapshot to the latest data — so the impact of the work is visible over time.'],
+      ['What gets queued', 'The Action Queue lists experiments & stop candidates, plus metric-driven reviews: shows trending at the worst view band (L5-heavy) and shows with success rate below 75% ("Review & act"). CONTINUE experiments are not listed — no action is needed.'],
+      ['Pick up = start an experiment', 'In the Action Queue, "Pick up" opens a panel under the show where you choose the METRIC you\'re working on (success rate, HDC/label, hook/pace/ending fix, stop, promote), a TARGET for it (e.g. success rate ≥ 85%, decrease L5 by 30%, +1 L0 content, increase L3 by 20%, resolve hook drop-off), and optional "actions by" / "review on" dates. The current numbers are snapshotted at pickup. Owner is a self-reported name, shared across everyone (no login).'],
+      ['Auto verdict (Tracking → reached / failed)', 'The tool tracks the chosen metric against the target. If the target is hit on or before the review date → "Target reached". If the review date passes unmet → "Experiment failed". Until then it shows "Tracking". The owner can override (mark reached/failed) anytime.'],
+      ['Needs attention → top of queue', 'A picked-up experiment whose review date has arrived, or whose target has been reached/failed, floats to the top of the Action Queue (red banner + tint), so nothing is missed.'],
+      ['Conclude → history', 'The owner concludes an experiment ("save to history"), which moves it — with its final verdict — into the show\'s experiment history. History is shown read-only at the bottom of that show\'s Deep Dive. The Deep Dive shows the active experiment as a summary only; actions are taken in the Action Queue.'],
     ],
   },
 ];

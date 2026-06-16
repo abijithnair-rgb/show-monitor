@@ -15,7 +15,8 @@
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const KEY = 'sm:actions';
+const KEY = 'sm:actions';      // active experiments: field = show_id
+const HKEY = 'sm:history';     // concluded experiments: field = show_id → JSON array
 const url = () => process.env.KV_REST_API_URL;
 const token = () => process.env.KV_REST_API_TOKEN;
 const configured = () => !!(url() && token());
@@ -47,12 +48,12 @@ function foldHash(flat) {
 }
 
 export async function GET() {
-  if (!configured()) return Response.json({ configured: false, actions: {} });
+  if (!configured()) return Response.json({ configured: false, actions: {}, history: {} });
   try {
-    const flat = await kv(['HGETALL', KEY]);
-    return Response.json({ configured: true, actions: foldHash(flat) });
+    const [flat, hflat] = await Promise.all([kv(['HGETALL', KEY]), kv(['HGETALL', HKEY])]);
+    return Response.json({ configured: true, actions: foldHash(flat), history: foldHash(hflat) });
   } catch (err) {
-    return Response.json({ configured: true, actions: {}, error: err?.message || 'KV read failed.' }, { status: 502 });
+    return Response.json({ configured: true, actions: {}, history: {}, error: err?.message || 'KV read failed.' }, { status: 502 });
   }
 }
 
@@ -73,42 +74,63 @@ export async function POST(req) {
     return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
   };
 
+  const validOverride = (v) => (v === 'reached' || v === 'failed' ? v : null);
+  const getPrev = async () => { try { const raw = await kv(['HGET', KEY, showId]); return raw ? JSON.parse(raw) : null; } catch { return null; } };
+
   try {
     if (op === 'release') {
       await kv(['HDEL', KEY, showId]);
       return Response.json({ ok: true, show_id: showId, claim: null });
     }
-    // 'update' edits dates/note on an existing claim without changing ownership.
+    // 'archive' concludes the active experiment: append it to per-show history
+    // (with the final verdict + snapshot the client computed) and clear it from
+    // the active board.
+    if (op === 'archive') {
+      const prev = await getPrev();
+      if (!prev) return Response.json({ error: 'No experiment to archive.' }, { status: 404 });
+      const record = {
+        ...prev,
+        verdict: validOverride(body?.verdict) || (body?.verdict === 'reached' || body?.verdict === 'failed' ? body.verdict : 'failed'),
+        final_snapshot: body?.final_snapshot || null,
+        concluded_at: new Date().toISOString(),
+      };
+      let hist = [];
+      try { const raw = await kv(['HGET', HKEY, showId]); hist = raw ? JSON.parse(raw) : []; } catch { hist = []; }
+      if (!Array.isArray(hist)) hist = [];
+      hist.unshift(record); // newest first
+      await kv(['HSET', HKEY, showId, JSON.stringify(hist.slice(0, 50))]);
+      await kv(['HDEL', KEY, showId]);
+      return Response.json({ ok: true, show_id: showId, claim: null, archived: record });
+    }
+    // 'update' edits dates / note / verdict override on an existing claim.
     if (op === 'update') {
-      let prev = null;
-      try { const raw = await kv(['HGET', KEY, showId]); prev = raw ? JSON.parse(raw) : null; } catch { prev = null; }
-      if (!prev) return Response.json({ error: 'No claim to update.' }, { status: 404 });
+      const prev = await getPrev();
+      if (!prev) return Response.json({ error: 'No experiment to update.' }, { status: 404 });
       const claim = {
         ...prev,
         action_date: 'action_date' in body ? dateOrNull(body.action_date) : (prev.action_date ?? null),
         review_date: 'review_date' in body ? dateOrNull(body.review_date) : (prev.review_date ?? null),
         note: body?.note != null ? String(body.note) : (prev.note || ''),
+        verdict_override: 'verdict_override' in body ? validOverride(body.verdict_override) : (prev.verdict_override ?? null),
       };
       await kv(['HSET', KEY, showId, JSON.stringify(claim)]);
       return Response.json({ ok: true, show_id: showId, claim });
     }
-    if (op === 'claim' || op === 'done') {
+    if (op === 'claim') {
       const by = String(body?.by || '').trim();
       if (!by) return Response.json({ error: 'A name (by) is required.' }, { status: 400 });
-      // For "done" preserve the original claim's by/claimed_at/snapshot/dates when present.
-      let prev = null;
-      try { const raw = await kv(['HGET', KEY, showId]); prev = raw ? JSON.parse(raw) : null; } catch { prev = null; }
       const now = new Date().toISOString();
       const claim = {
         show_id: showId,
-        status: op === 'done' ? 'done' : 'in_progress',
-        by: op === 'done' && prev?.by ? prev.by : by,
-        claimed_at: prev?.claimed_at || now,
-        action_date: op === 'done' ? (prev?.action_date ?? null) : dateOrNull(body?.action_date) ?? (prev?.action_date ?? null),
-        review_date: op === 'done' ? (prev?.review_date ?? null) : dateOrNull(body?.review_date) ?? (prev?.review_date ?? null),
-        done_at: op === 'done' ? now : null,
-        note: body?.note != null ? String(body.note) : (prev?.note || ''),
-        snapshot: prev?.snapshot || body?.snapshot || null,
+        by,
+        claimed_at: now,
+        metric: body?.metric != null ? String(body.metric) : null,
+        target: body?.target ?? null,
+        action_date: dateOrNull(body?.action_date),
+        review_date: dateOrNull(body?.review_date),
+        note: body?.note != null ? String(body.note) : '',
+        snapshot: body?.snapshot || null,
+        verdict_override: null,
       };
       await kv(['HSET', KEY, showId, JSON.stringify(claim)]);
       return Response.json({ ok: true, show_id: showId, claim });

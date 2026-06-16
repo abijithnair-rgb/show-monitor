@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { idbSet, idbGet, idbDel } from '@/lib/idb';
 import { sampleData } from '@/lib/sample';
 import { fetchSheets, fetchRemote, remoteStatus } from '@/lib/remote';
-import { fetchActions, claimAction, updateClaim, markDone, releaseAction } from '@/lib/actions';
+import { fetchActions, claimAction, updateClaim, archiveAction, releaseAction } from '@/lib/actions';
 
 // Global app state (replaces the original mutable `state` object).
 export const useStore = create((set, get) => ({
@@ -15,8 +15,9 @@ export const useStore = create((set, get) => ({
   remoteConfigured: { combined: false, rca: false },
   lastSyncAt: null, syncing: false, syncError: null,
 
-  // Shared action-ownership board (Vercel KV). actions = { show_id: claim }.
-  actions: {}, actionsConfigured: false, userName: '',
+  // Shared action-ownership board (Vercel KV). actions = { show_id: claim },
+  // history = { show_id: [concluded experiments] }.
+  actions: {}, history: {}, actionsConfigured: false, userName: '',
 
   tab: 'data',
   filters: { language: '', category: '', bu: '', status: '', action: '', agreement: '' },
@@ -123,8 +124,8 @@ export const useStore = create((set, get) => ({
   // ---- Shared action-ownership board (Vercel KV) ----
   loadActions: async () => {
     try {
-      const { configured, actions } = await fetchActions();
-      set({ actionsConfigured: !!configured, actions: actions || {} });
+      const { configured, actions, history } = await fetchActions();
+      set({ actionsConfigured: !!configured, actions: actions || {}, history: history || {} });
     } catch {
       set({ actionsConfigured: false });
     }
@@ -146,15 +147,20 @@ export const useStore = create((set, get) => ({
     get().applyClaim(showId, claim);
     return claim;
   },
-  updateClaimDates: async (showId, fields) => {
+  updateClaimFields: async (showId, fields) => {
     const { claim } = await updateClaim(showId, fields);
     get().applyClaim(showId, claim);
     return claim;
   },
-  doneShow: async (showId, by) => {
-    const { claim } = await markDone(showId, by);
-    get().applyClaim(showId, claim);
-    return claim;
+  // Conclude the experiment → append to per-show history, clear the active claim.
+  archiveShow: async (showId, verdict, finalSnapshot) => {
+    const { archived } = await archiveAction(showId, verdict, finalSnapshot);
+    set((st) => {
+      const actions = { ...st.actions }; delete actions[String(showId)];
+      const history = { ...st.history };
+      history[String(showId)] = [archived, ...(history[String(showId)] || [])];
+      return { actions, history };
+    });
   },
   releaseShow: async (showId) => {
     await releaseAction(showId);

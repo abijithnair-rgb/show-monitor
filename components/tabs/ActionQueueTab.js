@@ -3,7 +3,8 @@ import { Fragment, useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildModel, buildFatIndex } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
-import { metricSnapshot, reviewDue } from '@/lib/ownership';
+import { metricSnapshot, reviewDue, evalVerdict, VERDICT_META, metricLabel } from '@/lib/ownership';
+import { successRate } from '@/lib/metrics';
 import PickupPanel from '@/components/PickupPanel';
 import { fmtDate, weeksAgo, timeAgo, fmtPct, fmtNum, num, LANG_NAMES } from '@/lib/format';
 
@@ -12,23 +13,28 @@ import { fmtDate, weeksAgo, timeAgo, fmtPct, fmtNum, num, LANG_NAMES } from '@/l
 // p25). That's a sustained reach/discovery failure worth a manual review.
 const L5_SHARE_THRESHOLD = 5 / 7;
 const L5_MIN_SUPPLY = 3; // need a few videos before the share means anything
+const SR_REVIEW_BELOW = 75; // success rate under this % → review & take action
 
-// Every experimental decision shows up in the queue. STOP/PROMOTE/CONTINUE are
-// firm calls; anything else (INSUFFICIENT_DATA / LOW_CONFIDENCE left underived)
-// is bucketed as REVIEW so the show is never silently dropped. REVIEW_L5 is the
-// L5-heavy flag above.
-const DECISION_ORDER = ['STOP', 'PROMOTE', 'CONTINUE', 'REVIEW_L5', 'REVIEW'];
+// Queue buckets. Experiments are STOP / PROMOTE / REVIEW (insufficient data).
+// CONTINUE is intentionally excluded — no action needed. REVIEW_ACT covers the
+// metric-driven reasons (L5-heavy reach, success rate < 75%).
+const DECISION_ORDER = ['STOP', 'PROMOTE', 'REVIEW_ACT', 'REVIEW'];
 const DECISION_LABELS = {
-  STOP: 'STOP', PROMOTE: 'PROMOTE', CONTINUE: 'CONTINUE', REVIEW_L5: 'Review & act', REVIEW: 'REVIEW',
+  STOP: 'STOP', PROMOTE: 'PROMOTE', REVIEW_ACT: 'Review & act', REVIEW: 'Review',
 };
 const DECISION_META = {
   STOP: { bg: '#fee2e2', fg: '#991b1b', ring: 'ring-red-300', chip: 'chip-red' },
   PROMOTE: { bg: '#dcfce7', fg: '#065f46', ring: 'ring-green-300', chip: 'chip-green' },
-  CONTINUE: { bg: '#fef3c7', fg: '#92400e', ring: 'ring-amber-300', chip: 'chip-amber' },
-  REVIEW_L5: { bg: '#ede9fe', fg: '#5b21b6', ring: 'ring-purple-300', chip: 'chip-purple' },
+  REVIEW_ACT: { bg: '#ede9fe', fg: '#5b21b6', ring: 'ring-purple-300', chip: 'chip-purple' },
   REVIEW: { bg: '#f1f5f9', fg: '#475569', ring: 'ring-slate-300', chip: 'chip-grey' },
 };
-const dispDecision = (verdict) => (['STOP', 'PROMOTE', 'CONTINUE'].includes(verdict) ? verdict : 'REVIEW');
+// Map an experimental verdict to a queue bucket. CONTINUE stays CONTINUE (it's
+// filtered out — no action needed); insufficient/low-confidence → REVIEW.
+const dispDecision = (verdict) => {
+  if (verdict === 'STOP' || verdict === 'PROMOTE') return verdict;
+  if (verdict === 'CONTINUE') return 'CONTINUE';
+  return 'REVIEW';
+};
 
 // L5-heavy detector: returns {l5, supply, pct} when the show's last-7d label mix
 // is dominated by L5 past the threshold, else null.
@@ -129,31 +135,47 @@ export default function ActionQueueTab() {
   const hdcIdx = useMemo(() => (data.hdcRows ? buildHdcIndex(data.hdcRows) : null), [data]);
   const fatIdx = useMemo(() => (data.fatRows ? buildFatIndex(data.fatRows) : null), [data]);
 
-  // Shows needing a decision: every experimental show (STOP/PROMOTE/CONTINUE/REVIEW)
-  // PLUS non-experimental shows that are stop candidates (below the peer stop bar or
-  // reconciled to a stop) PLUS L5-heavy shows (≥5/7 of last-7d videos in the worst
-  // view band). Inactive shows are already stopped, so they're excluded.
+  // Shows needing a decision:
+  //  • experimental shows with a STOP / PROMOTE / REVIEW(insufficient) verdict —
+  //    CONTINUE is dropped (no action needed);
+  //  • non-experimental stop candidates (below the peer stop bar / reconciled stop);
+  //  • metric-driven reviews: L5-heavy reach (≥5/7 worst-band) OR success rate < 75%.
+  // Inactive shows are already stopped, so they're excluded.
   const rows = useMemo(() => {
     return model
-      .map((s) => ({ s, l5: hdcIdx ? l5Info(hdcIdx.get(s.id)) : null }))
-      .filter(({ s, l5 }) => {
-        if (s.status === 'inactive') return false;
-        if (s.life?.isExp) return true;
-        if (s.life?.band === 'stop' || ['CONFIRMED_STOP', 'STOP_REVIEW'].includes(s.rec?.key)) return true;
-        return !!l5;
+      .map((s) => {
+        const l5 = hdcIdx ? l5Info(hdcIdx.get(s.id)) : null;
+        const eps = fatIdx?.get(s.id)?.eps;
+        const sr = eps ? successRate(eps, data.fatRows) : null;
+        const srLow = sr && sr.n && sr.pct < SR_REVIEW_BELOW ? sr : null;
+        return { s, l5, srLow };
       })
-      .map(({ s, l5 }) => {
+      .map(({ s, l5, srLow }) => {
+        if (s.status === 'inactive') return null;
         const ev = s.eval?.cur || {};
         const raw = String(ev.experimental_decision || '').toUpperCase();
         const isExp = !!s.life?.isExp;
+        const expDecision = isExp ? dispDecision(s.life.verdictRaw) : null;
         const isStop = !isExp && (s.life?.band === 'stop' || ['CONFIRMED_STOP', 'STOP_REVIEW'].includes(s.rec?.key));
-        const decision = isExp ? dispDecision(s.life.verdictRaw) : isStop ? 'STOP' : 'REVIEW_L5';
-        const l5Why = l5 ? `Trending L5: ${l5.l5}/${l5.supply} of this week's videos (≈${l5.pct}%) fell into the worst view band (below the p25 reach bar) — review reach/discovery (thumbnails, topics, recommendations) and take action.` : null;
+
+        // Metric review reasons (drive the REVIEW_ACT bucket / why text).
+        const reasons = [];
+        if (l5) reasons.push(`trending L5 (${l5.l5}/${l5.supply} of this week ≈${l5.pct}% in the worst view band — review reach/discovery)`);
+        if (srLow) reasons.push(`success rate ${srLow.pct}% (${srLow.pass}/${srLow.n}) below ${SR_REVIEW_BELOW}% — review content quality`);
+
+        // Decide the bucket; CONTINUE-only experiments with no reasons are dropped.
+        let decision;
+        if (isExp && expDecision !== 'CONTINUE') decision = expDecision; // STOP / PROMOTE / REVIEW
+        else if (isStop) decision = 'STOP';
+        else if (reasons.length) decision = 'REVIEW_ACT';
+        else return null; // exp CONTINUE (or healthy) with no review reason → not in queue
+
         let why;
-        if (decision === 'REVIEW_L5') why = l5Why;
-        else {
+        if (decision === 'REVIEW_ACT') {
+          why = 'Review & take action: ' + reasons.join('; ') + '.';
+        } else {
           why = isExp ? whyText(s, decision) : (s.rec?.detail || ev.decision_reason || whyText(s, 'STOP'));
-          if (l5) why = `${why} · Also trending L5 (${l5.l5}/${l5.supply}, ≈${l5.pct}%).`;
+          if (reasons.length) why = `${why} · Also: ${reasons.join('; ')}.`;
         }
         return {
           s,
@@ -165,8 +187,9 @@ export default function ActionQueueTab() {
           confidence: ev.confidence,
           why,
         };
-      });
-  }, [model, hdcIdx]);
+      })
+      .filter(Boolean);
+  }, [model, hdcIdx, fatIdx, data.fatRows]);
 
   const langs = [...new Set(rows.map((r) => r.s.language).filter(Boolean))].sort();
   const statuses = [...new Set(rows.map((r) => r.s.status).filter(Boolean))].sort();
@@ -198,17 +221,24 @@ export default function ActionQueueTab() {
   });
 
   const launchT = (r) => (r.launch ? new Date(r.launch).getTime() || Infinity : Infinity);
-  // Review-due claims (review date reached, not done) always float to the very top,
-  // regardless of the chosen sort — they're the actions that need attention now.
-  const dueOf = (r) => reviewDue(actions[String(r.s.id)]);
+  // A picked-up experiment "needs attention" when its review date has arrived OR
+  // the target has been auto-judged reached/failed — those float to the very top,
+  // regardless of the chosen sort.
+  const attnOf = (r) => {
+    const claim = actions[String(r.s.id)];
+    if (!claim) return false;
+    if (reviewDue(claim)) return true;
+    const v = evalVerdict(claim, metricSnapshot(r.s, hdcIdx, fatIdx, data.fatRows));
+    return v !== 'tracking';
+  };
   filtered = [...filtered].sort((a, b) => {
-    const da = dueOf(a), db = dueOf(b);
+    const da = attnOf(a), db = attnOf(b);
     if (da !== db) return da ? -1 : 1;
     if (sortBy === 'recent') return launchT(b) - launchT(a);
     if (sortBy === 'recommendation') return (a.decision === 'STOP' ? 0 : 1) - (b.decision === 'STOP' ? 0 : 1) || launchT(a) - launchT(b);
     return launchT(a) - launchT(b); // overdue: oldest launch first
   });
-  const dueCount = filtered.filter(dueOf).length;
+  const dueCount = filtered.filter(attnOf).length;
 
   function clearFilters() {
     setSearch(''); setLanguage(''); setStatus(''); setBu(''); setCategory(''); setRecommendation(''); setConfidence(''); setFixArea('');
@@ -245,7 +275,7 @@ export default function ActionQueueTab() {
       </div>
       <p className="text-sm text-slate-500 mb-3">Experiments, stop candidates & shows trending at the L5 label — needing a decision.{actionsConfigured ? " Pick up an action to set review dates and let the team know you're on it." : ''}</p>
       {!actionsConfigured && <p className="hint mb-3">Shared "pick up" is not configured on the server — actions are view-only here. (Link a Vercel KV store to enable team ownership.)</p>}
-      {actionsConfigured && dueCount > 0 && <div className="banner banner-red text-[12px] mb-3"><span>⏰ {dueCount} picked-up {dueCount === 1 ? 'action is' : 'actions are'} due for review — shown at the top.</span></div>}
+      {actionsConfigured && dueCount > 0 && <div className="banner banner-red text-[12px] mb-3"><span>⏰ {dueCount} picked-up {dueCount === 1 ? 'experiment needs' : 'experiments need'} attention (review due, or target reached/failed) — shown at the top.</span></div>}
 
       <div className="card p-4 mb-4">
         <div className="flex gap-2 mb-3 flex-wrap">
@@ -324,13 +354,17 @@ export default function ActionQueueTab() {
             {filtered.length ? (
               filtered.map((r) => {
                 const claim = actions[String(r.s.id)];
+                const snapNow = metricSnapshot(r.s, hdcIdx, fatIdx, data.fatRows);
+                const verdict = claim ? evalVerdict(claim, snapNow) : null;
+                const vMeta = verdict ? VERDICT_META[verdict] : null;
                 const due = reviewDue(claim);
+                const attn = claim && (due || verdict !== 'tracking');
                 const expanded = expandedId === r.s.id;
                 const colCount = actionsConfigured ? 8 : 7;
                 const toggle = (e) => { e.stopPropagation(); setExpandedId((v) => (v === r.s.id ? null : r.s.id)); };
                 return (
                 <Fragment key={r.s.id}>
-                <tr className={'row-clickable' + (due ? ' bg-red-50' : '')} onClick={() => openDeepDive(r.s.id)}>
+                <tr className={'row-clickable' + (attn ? ' bg-red-50' : '')} onClick={() => openDeepDive(r.s.id)}>
                   <td>
                     <div className="font-medium">{r.s.title || '—'}</div>
                     <div className="mt-1 flex gap-1 flex-wrap">
@@ -354,11 +388,10 @@ export default function ActionQueueTab() {
                       {claim ? (
                         <button className="text-left text-xs hover:opacity-80" onClick={toggle}>
                           <div className="flex items-center gap-1 flex-wrap">
-                            <span className={'chip ' + (claim.status === 'done' ? 'chip-green' : 'chip-amber')}>
-                              {claim.status === 'done' ? '✓ done' : '● in progress'}
-                            </span>
+                            {vMeta && <span className={'chip ' + vMeta.chip}>{vMeta.label}</span>}
                             <span className="font-medium text-slate-700">{claim.by}</span>
-                            {due && <span className="chip chip-red">review due</span>}
+                            <span className="chip chip-purple">{metricLabel(claim.metric)}</span>
+                            {due && verdict === 'tracking' && <span className="chip chip-red">review due</span>}
                           </div>
                           <div className="hint mt-0.5">
                             picked up {timeAgo(claim.claimed_at)}

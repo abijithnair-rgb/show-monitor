@@ -8,7 +8,7 @@ import { esc, fmtDate, LANG_NAMES, num } from '@/lib/format';
 import { actionChip, agreeBadge, kpiGrid, hdcCard, contribBar, last10Table } from '@/lib/render';
 import { TrajectoryChart, RetentionChart, FailureDoughnut, AudienceSourceChart, RetentionTrendChart } from '@/components/deepdive/charts';
 import PickupPanel from '@/components/PickupPanel';
-import { snapshotFromData } from '@/lib/ownership';
+import { snapshotFromData, metricLabel, VERDICT_META } from '@/lib/ownership';
 
 export default function DeepDiveTab() {
   const data = useStore((s) => s.data());
@@ -142,19 +142,49 @@ function DeepBody({ s, data }) {
       {data.retRows && <RetentionCard retRows={data.retRows} showId={s.id} language={s.language} data={data} />}
 
       {fobj && fobj.eps && fobj.eps.length > 0 && <div dangerouslySetInnerHTML={{ __html: last10Table(fobj.eps) }} />}
+
+      <ExperimentHistory s={s} />
     </div>
   );
 }
 
-// Pick-up status for this show — the same panel used in the Action Queue, so the
-// owner, dates, and since-pickup deltas are visible (and actionable) here too.
+// Active experiment summary — READ-ONLY (actions are taken in the Action Queue).
+// Shown near the top so the current status is visible at a glance.
 function PickupStatus({ s, data }) {
   const configured = useStore((st) => st.actionsConfigured);
-  if (!configured) return null;
+  const claim = useStore((st) => st.actions[String(s.id)]);
+  if (!configured || !claim) return null;
   return (
     <div className="mb-4">
-      <div className="font-semibold mb-2 text-sm">Action ownership</div>
-      <PickupPanel s={s} snapshotNow={snapshotFromData(s, data)} />
+      <div className="font-semibold mb-2 text-sm">Active experiment</div>
+      <PickupPanel s={s} snapshotNow={snapshotFromData(s, data)} readOnly />
+    </div>
+  );
+}
+
+// Concluded experiments — shown at the BOTTOM of the deep dive (history, not top).
+function ExperimentHistory({ s }) {
+  const configured = useStore((st) => st.actionsConfigured);
+  const history = useStore((st) => st.history[String(s.id)]) || [];
+  if (!configured || history.length === 0) return null;
+  return (
+    <div className="card p-4 mb-4">
+      <div className="font-semibold mb-2">Experiment history ({history.length})</div>
+      <div className="flex flex-col gap-2">
+        {history.map((h, i) => {
+          const vm = VERDICT_META[h.verdict] || VERDICT_META.failed;
+          return (
+            <div key={i} className="flex items-center gap-2 flex-wrap text-xs border-b border-slate-100 pb-2 last:border-0 last:pb-0">
+              <span className={'chip ' + vm.chip}>{vm.label}</span>
+              <span className="chip chip-purple">{metricLabel(h.metric)}</span>
+              <span className="text-slate-600 font-medium">{h.by}</span>
+              <span className="hint">
+                {fmtDate(h.claimed_at)}{h.review_date ? ` → review ${fmtDate(h.review_date)}` : ''}{h.concluded_at ? ` · concluded ${fmtDate(h.concluded_at)}` : ''}
+              </span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
