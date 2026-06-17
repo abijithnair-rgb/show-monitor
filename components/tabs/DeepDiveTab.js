@@ -8,7 +8,7 @@ import { esc, fmtDate, LANG_NAMES, num } from '@/lib/format';
 import { actionChip, agreeBadge, kpiGrid, hdcCard, contribBar, last10Table } from '@/lib/render';
 import { TrajectoryChart, RetentionChart, FailureDoughnut, AudienceSourceChart, RetentionTrendChart } from '@/components/deepdive/charts';
 import PickupPanel from '@/components/PickupPanel';
-import { snapshotFromData, currentFor, metricLabel, VERDICT_META, canAssign, targetText, trackedValueText } from '@/lib/ownership';
+import { snapshotFromData, currentFor, metricLabel, VERDICT_META, canAssign, targetText, trackedValueText, evalVerdict } from '@/lib/ownership';
 
 // Searchable show picker — a text box that filters a dropdown list by title,
 // category or show_id. Click a result (or the only match) to select.
@@ -136,6 +136,8 @@ function DeepBody({ s, data }) {
   );
   const userName = useStore((st) => st.userName);
   const [expOpen, setExpOpen] = useState(null); // null | 'pickup' | 'assign'
+  const [collapsed, setCollapsed] = useState(() => new Set()); // experiment ids collapsed
+  const toggleCollapsed = (id) => setCollapsed((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const canLaunch = actionsConfigured;
 
   const headHtml = `<span class="text-2xl font-bold">${esc(s.title)}</span>
@@ -162,14 +164,31 @@ function DeepBody({ s, data }) {
       </div>
       <div className={`banner ${recTone} mb-4`} style={{ display: 'block' }} dangerouslySetInnerHTML={{ __html: bannerHtml }} />
 
-      {/* Active experiments — one interactive panel each (owner can edit/conclude). */}
+      {/* Active experiments — one collapsible, interactive panel each. */}
       {actionsConfigured && showClaims.length > 0 && (
         <div className="mb-4">
           <div className="font-semibold mb-2 text-sm">Active experiment{showClaims.length > 1 ? `s (${showClaims.length})` : ''}</div>
           <div className="flex flex-col gap-3">
-            {showClaims.map((c) => (
-              <PickupPanel key={c.id} s={s} claimId={c.id} snapshotNow={currentFor(c, s, data)} />
-            ))}
+            {showClaims.map((c) => {
+              const cur = currentFor(c, s, data);
+              const vm = VERDICT_META[evalVerdict(c, cur)] || VERDICT_META.tracking;
+              const isCollapsed = collapsed.has(c.id);
+              return (
+                <div key={c.id} className="border border-slate-200 rounded-lg overflow-hidden">
+                  <button
+                    className="w-full flex items-center gap-2 flex-wrap px-3 py-2 text-left bg-slate-50 hover:bg-slate-100"
+                    onClick={() => toggleCollapsed(c.id)}
+                  >
+                    <span className="text-slate-400 text-xs w-3">{isCollapsed ? '▸' : '▾'}</span>
+                    <span className={'chip ' + vm.chip}>{vm.label}</span>
+                    <span className="chip chip-purple">{metricLabel(c.metric)}</span>
+                    <span className="font-medium text-slate-700 text-sm">{c.by}</span>
+                    <span className="text-xs text-slate-500 ml-auto">{targetText(c.target)}{c.review_date ? ` · review ${fmtDate(c.review_date)}` : ''}</span>
+                  </button>
+                  {!isCollapsed && <div className="p-2"><PickupPanel s={s} claimId={c.id} snapshotNow={cur} /></div>}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

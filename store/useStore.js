@@ -20,7 +20,9 @@ export const useStore = create((set, get) => ({
   actions: {}, history: {}, actionsConfigured: false, userName: '',
 
   tab: 'data',
-  filters: { language: '', category: '', bu: '', status: '', action: '', agreement: '' },
+  // metricBand/metricOp/metricX: Explorer-only label/SR threshold filter
+  // (e.g. "L0 ≥ 40%" or "SR ≤ 70%"). Empty band/X = inactive.
+  filters: { language: '', category: '', bu: '', status: '', action: '', agreement: '', metricBand: '', metricOp: 'gte', metricX: '' },
   search: '',
   sortBy: 'users',
   deepDiveId: null,
@@ -43,7 +45,7 @@ export const useStore = create((set, get) => ({
   // ---- UI setters ----
   setTab: (tab) => set({ tab }),
   setFilter: (key, value) => set((st) => ({ filters: { ...st.filters, [key]: value } })),
-  resetFilters: () => set({ filters: { language: '', category: '', bu: '', status: '', action: '', agreement: '' }, search: '' }),
+  resetFilters: () => set({ filters: { language: '', category: '', bu: '', status: '', action: '', agreement: '', metricBand: '', metricOp: 'gte', metricX: '' }, search: '' }),
   setSearch: (search) => set({ search }),
   setSortBy: (sortBy) => set({ sortBy }),
   setDeepDiveId: (deepDiveId) => set({ deepDiveId }),
