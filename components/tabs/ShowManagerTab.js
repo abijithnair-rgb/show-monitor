@@ -5,7 +5,7 @@ import { buildModel, buildFatIndex, normStatus } from '@/lib/model';
 import { buildHdcIndex, windowedHdcRate } from '@/lib/hdc';
 import { windowedSuccessRate } from '@/lib/metrics';
 import {
-  POCS, currentFor, metricLabel, targetText, evalVerdict, VERDICT_META,
+  POCS, currentFor, metricLabel, targetText, trackedValueText, evalVerdict, VERDICT_META, reviewDue,
   weekKey, monthKey, weekRange, monthRange, todayStr,
 } from '@/lib/ownership';
 import { fmtDate, LANG_NAMES } from '@/lib/format';
@@ -25,6 +25,7 @@ export default function ShowManagerTab() {
   const [manager, setManager] = useState(POCS.includes(userName) ? userName : '');
   const [granularity, setGranularity] = useState('weekly'); // 'weekly' | 'monthly'
   const [periodSel, setPeriodSel] = useState(''); // chosen period key
+  const [detailView, setDetailView] = useState('experiments'); // 'experiments' | 'shows'
 
   const model = useMemo(() => buildModel(data), [data]);
   const byId = useMemo(() => new Map(model.map((s) => [String(s.id), s])), [model]);
@@ -64,7 +65,7 @@ export default function ShowManagerTab() {
       const s = byId.get(String(claim.show_id));
       const cur = s ? currentFor(claim, s, data, hdcIdx, fatIdx) : null;
       out.push({
-        id: claim.id, claim, concluded: false, by: claim.by, showId: String(claim.show_id), s,
+        id: claim.id, claim, cur, concluded: false, by: claim.by, showId: String(claim.show_id), s,
         claimedAt: slice10(claim.claimed_at), concludedAt: null,
         metric: claim.metric, target: claim.target,
         verdict: cur ? evalVerdict(claim, cur) : 'tracking',
@@ -75,7 +76,7 @@ export default function ShowManagerTab() {
       for (const rec of arr || []) {
         const s = byId.get(String(rec.show_id));
         out.push({
-          id: rec.id || `${rec.show_id}:${rec.concluded_at}`, claim: rec, concluded: true,
+          id: rec.id || `${rec.show_id}:${rec.concluded_at}`, claim: rec, cur: null, concluded: true,
           by: rec.by, showId: String(rec.show_id), s,
           claimedAt: slice10(rec.claimed_at), concludedAt: slice10(rec.concluded_at),
           metric: rec.metric, target: rec.target,
@@ -236,6 +237,14 @@ export default function ShowManagerTab() {
     return { id, s, title, language, category, status, hr, sr, exps };
   }).sort((a, b) => String(a.title).localeCompare(String(b.title)));
 
+  // Experiment-level rows for this manager in the period (one row per experiment).
+  const expRows = [...g.exps].sort((a, b) => {
+    const aAttn = !a.concluded && (a.verdict !== 'tracking' || reviewDue(a.claim));
+    const bAttn = !b.concluded && (b.verdict !== 'tracking' || reviewDue(b.claim));
+    if (aAttn !== bAttn) return aAttn ? -1 : 1;
+    return String(b.claimedAt || '').localeCompare(String(a.claimedAt || ''));
+  });
+
   const avg = (arr) => { const v = arr.filter((x) => x != null); return v.length ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 10) / 10 : null; };
   const avgHdc = avg(showRows.map((r) => (r.hr.n ? r.hr.pct : null)));
   const avgSr = avg(showRows.map((r) => (r.sr.n ? r.sr.pct : null)));
@@ -260,7 +269,7 @@ export default function ShowManagerTab() {
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
         {cards.map(([k, v, clickable]) => clickable ? (
-          <button key={k} className="card p-3 text-left hover:ring-2 hover:ring-slate-300 transition" onClick={() => tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+          <button key={k} className="card p-3 text-left hover:ring-2 hover:ring-slate-300 transition" onClick={() => { setDetailView('shows'); setTimeout(() => tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0); }}>
             <div className="text-[11px] text-slate-500">{k} <span className="text-slate-400">· view ↓</span></div>
             <div className="text-xl font-semibold text-slate-800">{v}</div>
           </button>
@@ -273,32 +282,88 @@ export default function ShowManagerTab() {
       </div>
 
       <div className="card overflow-x-auto" ref={tableRef}>
-        <div className="px-4 pt-3 text-sm font-semibold">Shows managed — {periodLabel(selPeriod)} <span className="hint">(HDC rate & success rate over the window)</span></div>
-        <table className="data-table">
-          <thead>
-            <tr><th>Show</th><th>Status</th><th>HDC rate</th><th>Success rate</th><th>Experiments</th><th>Verdict</th></tr>
-          </thead>
-          <tbody>
-            {showRows.length ? showRows.map((r) => (
-              <tr key={r.id} className="row-clickable" onClick={() => openDeepDive(r.id)}>
-                <td>
-                  <div className="font-medium">{r.title}</div>
-                  <div className="mt-1 flex gap-1 flex-wrap">
-                    {r.language && <span className="chip chip-blue">{LANG_NAMES[r.language] || r.language}</span>}
-                    {r.category && <span className="chip chip-purple">{r.category}</span>}
-                  </div>
-                </td>
-                <td><span className={'chip ' + statusChip(r.status)}>{r.status}</span></td>
-                <td>{r.hr.pct == null ? <span className="text-slate-300">—</span> : <span className="font-semibold">{r.hr.pct}%</span>}{r.hr.n ? <div className="hint">{r.hr.hdc}/{r.hr.n}</div> : null}</td>
-                <td>{r.sr.pct == null ? <span className="text-slate-300">—</span> : <span className="font-semibold">{r.sr.pct}%</span>}{r.sr.n ? <div className="hint">{r.sr.pass}/{r.sr.n}</div> : null}</td>
-                <td>{r.exps.length ? <div className="flex flex-col gap-1">{r.exps.map((e) => <span key={e.id} className="chip chip-purple whitespace-nowrap" title={targetText(e.target)}>{metricLabel(e.metric)}</span>)}</div> : <span className="text-slate-300">—</span>}</td>
-                <td>{r.exps.length ? <div className="flex flex-col gap-1">{r.exps.map((e) => { const vm = VERDICT_META[e.verdict] || VERDICT_META.tracking; return <span key={e.id} className={'chip ' + vm.chip}>{vm.label}</span>; })}</div> : <span className="text-slate-300">—</span>}</td>
-              </tr>
-            )) : (
-              <tr><td colSpan={6} className="text-center text-slate-400 py-6">No active/experimental shows assigned to {manager}.</td></tr>
-            )}
-          </tbody>
-        </table>
+        <div className="px-4 pt-3 flex items-center justify-between gap-2 flex-wrap">
+          <div className="text-sm font-semibold">
+            {detailView === 'shows' ? 'Shows managed' : 'Experiments'} — {periodLabel(selPeriod)}
+            <span className="hint"> ({detailView === 'shows' ? 'HDC rate & success rate over the window' : 'one row per experiment'})</span>
+          </div>
+          <div className="inline-flex rounded-md border border-slate-300 overflow-hidden text-xs">
+            {[['experiments', 'Experiments'], ['shows', 'Shows managed']].map(([k, label]) => (
+              <button key={k} onClick={() => setDetailView(k)}
+                className={`px-3 py-1.5 ${detailView === k ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {detailView === 'shows' ? (
+          <table className="data-table">
+            <thead>
+              <tr><th>Show</th><th>Status</th><th>HDC rate</th><th>Success rate</th><th>Experiments</th><th>Verdict</th></tr>
+            </thead>
+            <tbody>
+              {showRows.length ? showRows.map((r) => (
+                <tr key={r.id} className="row-clickable" onClick={() => openDeepDive(r.id)}>
+                  <td>
+                    <div className="font-medium">{r.title}</div>
+                    <div className="mt-1 flex gap-1 flex-wrap">
+                      {r.language && <span className="chip chip-blue">{LANG_NAMES[r.language] || r.language}</span>}
+                      {r.category && <span className="chip chip-purple">{r.category}</span>}
+                    </div>
+                  </td>
+                  <td><span className={'chip ' + statusChip(r.status)}>{r.status}</span></td>
+                  <td>{r.hr.pct == null ? <span className="text-slate-300">—</span> : <span className="font-semibold">{r.hr.pct}%</span>}{r.hr.n ? <div className="hint">{r.hr.hdc}/{r.hr.n}</div> : null}</td>
+                  <td>{r.sr.pct == null ? <span className="text-slate-300">—</span> : <span className="font-semibold">{r.sr.pct}%</span>}{r.sr.n ? <div className="hint">{r.sr.pass}/{r.sr.n}</div> : null}</td>
+                  <td>{r.exps.length ? <div className="flex flex-col gap-1">{r.exps.map((e) => <span key={e.id} className="chip chip-purple whitespace-nowrap" title={targetText(e.target)}>{metricLabel(e.metric)}</span>)}</div> : <span className="text-slate-300">—</span>}</td>
+                  <td>{r.exps.length ? <div className="flex flex-col gap-1">{r.exps.map((e) => { const vm = VERDICT_META[e.verdict] || VERDICT_META.tracking; return <span key={e.id} className={'chip ' + vm.chip}>{vm.label}</span>; })}</div> : <span className="text-slate-300">—</span>}</td>
+                </tr>
+              )) : (
+                <tr><td colSpan={6} className="text-center text-slate-400 py-6">No active/experimental shows assigned to {manager}.</td></tr>
+              )}
+            </tbody>
+          </table>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr><th>Show</th><th>Metric</th><th>Target</th><th>At pickup</th><th>Current / result</th><th>Date</th><th>Verdict</th></tr>
+            </thead>
+            <tbody>
+              {expRows.length ? expRows.map((e) => {
+                const vm = VERDICT_META[e.verdict] || VERDICT_META.tracking;
+                const title = e.s?.title || metaById.get(e.showId)?.show_name || `#${e.showId}`;
+                const due = !e.concluded && reviewDue(e.claim) && e.verdict === 'tracking';
+                const result = e.concluded
+                  ? (e.claim.final_snapshot ? trackedValueText(e.target, e.claim.final_snapshot) : '—')
+                  : (e.cur ? trackedValueText(e.target, e.cur) : '—');
+                return (
+                  <tr key={e.id} className="row-clickable" onClick={() => e.s && openDeepDive(e.s.id)}>
+                    <td>
+                      <div className="font-medium">{title}</div>
+                      {e.s && (
+                        <div className="mt-1 flex gap-1 flex-wrap">
+                          <span className="chip chip-blue">{LANG_NAMES[e.s.language] || e.s.language || '?'}</span>
+                          {e.s.category && <span className="chip chip-purple">{e.s.category}</span>}
+                        </div>
+                      )}
+                    </td>
+                    <td><span className="chip chip-purple">{metricLabel(e.metric)}</span></td>
+                    <td className="text-sm text-slate-600">{targetText(e.target)}</td>
+                    <td>{trackedValueText(e.target, e.claim.snapshot)}</td>
+                    <td className="font-semibold">{result}</td>
+                    <td className="text-sm text-slate-600">
+                      {e.concluded ? `concluded ${fmtDate(e.concludedAt)}` : (e.reviewDate ? `review ${fmtDate(e.reviewDate)}` : '—')}
+                      {due && <div className="hint" style={{ color: '#991b1b' }}>due</div>}
+                    </td>
+                    <td><span className={'chip ' + vm.chip}>{vm.label}</span></td>
+                  </tr>
+                );
+              }) : (
+                <tr><td colSpan={7} className="text-center text-slate-400 py-6">No experiments for {manager} in {periodLabel(selPeriod)}.</td></tr>
+              )}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
