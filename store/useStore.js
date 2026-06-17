@@ -22,7 +22,7 @@ export const useStore = create((set, get) => ({
   tab: 'data',
   // metricBand/metricOp/metricX: Explorer-only label/SR threshold filter
   // (e.g. "L0 ≥ 40%" or "SR ≤ 70%"). Empty band/X = inactive.
-  filters: { language: '', category: '', bu: '', status: '', action: '', agreement: '', metricBand: '', metricOp: 'gte', metricX: '' },
+  filters: { language: '', category: '', bu: '', status: '', action: '', agreement: '', manager: '', metricBand: '', metricOp: 'gte', metricX: '' },
   search: '',
   sortBy: 'users',
   deepDiveId: null,
@@ -30,7 +30,7 @@ export const useStore = create((set, get) => ({
 
   // Action Queue filters — in-memory only (survive tab switches, reset on a full
   // page refresh). Deliberately NOT persisted to IndexedDB.
-  aqFilters: { search: '', sortBy: 'overdue', language: '', status: '', bu: '', category: '', recommendation: '', reason: '', confidence: '', fixArea: '' },
+  aqFilters: { search: '', sortBy: 'overdue', language: '', status: '', bu: '', category: '', recommendation: '', reason: '', confidence: '', fixArea: '', manager: '' },
 
   // ---- derived ----
   hasData: () => !!(get().evalRows || get().fatRows),
@@ -45,14 +45,14 @@ export const useStore = create((set, get) => ({
   // ---- UI setters ----
   setTab: (tab) => set({ tab }),
   setFilter: (key, value) => set((st) => ({ filters: { ...st.filters, [key]: value } })),
-  resetFilters: () => set({ filters: { language: '', category: '', bu: '', status: '', action: '', agreement: '', metricBand: '', metricOp: 'gte', metricX: '' }, search: '' }),
+  resetFilters: () => set({ filters: { language: '', category: '', bu: '', status: '', action: '', agreement: '', manager: '', metricBand: '', metricOp: 'gte', metricX: '' }, search: '' }),
   setSearch: (search) => set({ search }),
   setSortBy: (sortBy) => set({ sortBy }),
   setDeepDiveId: (deepDiveId) => set({ deepDiveId }),
   setDeepLang: (deepLang) => set({ deepLang }),
   openDeepDive: (id) => set({ deepDiveId: id, tab: 'deep' }),
   setAqFilter: (key, value) => set((st) => ({ aqFilters: { ...st.aqFilters, [key]: value } })),
-  resetAqFilters: () => set({ aqFilters: { search: '', sortBy: 'overdue', language: '', status: '', bu: '', category: '', recommendation: '', reason: '', confidence: '', fixArea: '' } }),
+  resetAqFilters: () => set({ aqFilters: { search: '', sortBy: 'overdue', language: '', status: '', bu: '', category: '', recommendation: '', reason: '', confidence: '', fixArea: '', manager: '' } }),
 
   // All active experiments for a show (sorted oldest-first; [0] = "primary").
   claimsForShow: (showId) => Object.values(get().actions || {})

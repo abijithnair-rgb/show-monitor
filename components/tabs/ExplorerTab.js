@@ -73,7 +73,7 @@ export default function ExplorerTab() {
     if (tr) openDeepDive(tr.getAttribute('data-show'));
   }
 
-  const colspan = hdcRows ? 8 : 6;
+  const colspan = hdcRows ? 9 : 7;
 
   return (
     <div>
@@ -147,6 +147,7 @@ export default function ExplorerTab() {
           <thead>
             <tr>
               <th {...tipAttr('show')}>Show</th>
+              <th>Show manager</th>
               <th {...tipAttr('status')}>Status</th>
               <th {...tipAttr('lifecycle')} style={{ minWidth: 240 }}>Lifecycle verdict (NSE)</th>
               <th {...tipAttr('users')}>Users</th>

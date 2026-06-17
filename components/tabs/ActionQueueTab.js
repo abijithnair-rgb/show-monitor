@@ -126,7 +126,7 @@ export default function ActionQueueTab() {
   const aqFilters = useStore((s) => s.aqFilters);
   const setAqFilter = useStore((s) => s.setAqFilter);
   const resetAqFilters = useStore((s) => s.resetAqFilters);
-  const { search, sortBy, language, status, bu, category, recommendation, reason, confidence, fixArea } = aqFilters;
+  const { search, sortBy, language, status, bu, category, recommendation, reason, confidence, fixArea, manager } = aqFilters;
   // Setter factory that also accepts the functional-updater form some pills use.
   const mkSet = (key) => (v) => setAqFilter(key, typeof v === 'function' ? v(aqFilters[key]) : v);
   const setSearch = mkSet('search');
@@ -139,6 +139,7 @@ export default function ActionQueueTab() {
   const setReason = mkSet('reason');
   const setConfidence = mkSet('confidence');
   const setFixArea = mkSet('fixArea');
+  const setManager = mkSet('manager');
 
   const iCanAssign = canAssign(userName);
 
@@ -217,6 +218,7 @@ export default function ActionQueueTab() {
   const bus = [...new Set(rows.map((r) => r.s.bu).filter(Boolean))].sort();
   const cats = [...new Set(rows.map((r) => r.s.category).filter(Boolean))].sort();
   const reasonsList = [...new Set(rows.flatMap((r) => r.reasonTags))].sort();
+  const managers = [...new Set(rows.map((r) => r.s.meta?.show_manager).filter(Boolean))].sort();
 
   const decisionCount = (d) => rows.filter((r) => r.decision === d).length;
 
@@ -233,6 +235,7 @@ export default function ActionQueueTab() {
     if (bu && r.s.bu !== bu) return false;
     if (category && r.s.category !== category) return false;
     if (recommendation && r.decision !== recommendation) return false;
+    if (manager && (r.s.meta?.show_manager || '') !== manager) return false;
     if (reason && !r.reasonTags.includes(reason)) return false;
     if (fixArea && String(r.s.fat?.mode || '').toUpperCase() !== fixArea) return false;
     if (confidence && String(r.confidence || '').toLowerCase() !== confidence) return false;
@@ -359,6 +362,7 @@ export default function ActionQueueTab() {
           <Dd label="CATEGORY" value={category} set={setCategory} options={cats} allLabel="All categories" />
           <Dd label="RECOMMENDATION" value={recommendation} set={setRecommendation} options={DECISION_ORDER} fmt={(d) => DECISION_LABELS[d] || d} allLabel="All recommendations" />
           <Dd label="REASON" value={reason} set={setReason} options={reasonsList} allLabel="All reasons" />
+          {managers.length > 0 && <Dd label="SHOW MANAGER" value={manager} set={setManager} options={managers} allLabel="All managers" />}
           <Dd label="CONFIDENCE" value={confidence} set={setConfidence} options={['high', 'medium', 'low']} allLabel="All confidence" />
         </div>
       </div>
@@ -368,6 +372,7 @@ export default function ActionQueueTab() {
           <thead>
             <tr>
               <th>Show</th>
+              <th>Show manager</th>
               <th>Launched</th>
               <th>Recommendation</th>
               <th>Reason</th>
@@ -390,7 +395,7 @@ export default function ActionQueueTab() {
                 const due = reviewDue(claim);
                 const attn = claim && (due || verdict !== 'tracking');
                 const isExpanded = expanded.id === r.s.id;
-                const colCount = actionsConfigured ? 9 : 8;
+                const colCount = actionsConfigured ? 10 : 9;
                 const openPanel = (e, asAssign) => { e.stopPropagation(); setExpanded((v) => (v.id === r.s.id && v.assign === asAssign ? { id: null, assign: false } : { id: r.s.id, assign: asAssign })); };
                 return (
                 <Fragment key={r.s.id}>
@@ -402,6 +407,7 @@ export default function ActionQueueTab() {
                       {r.s.category && <span className="chip chip-purple">{r.s.category}</span>}
                     </div>
                   </td>
+                  <td className="text-sm text-slate-700">{r.s.meta?.show_manager || <span className="hint">—</span>}</td>
                   <td>
                     <div>{fmtDate(r.launch)}</div>
                     <div className="hint">{weeksAgo(r.launch)}</div>
@@ -459,7 +465,7 @@ export default function ActionQueueTab() {
               })
             ) : (
               <tr>
-                <td colSpan={actionsConfigured ? 9 : 8} className="text-center text-slate-400 py-6">No shows need a decision right now. ✓</td>
+                <td colSpan={actionsConfigured ? 10 : 9} className="text-center text-slate-400 py-6">No shows need a decision right now. ✓</td>
               </tr>
             )}
           </tbody>

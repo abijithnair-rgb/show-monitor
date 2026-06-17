@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildModel, buildFatIndex, normStatus } from '@/lib/model';
 import { buildHdcIndex, windowedHdcRate } from '@/lib/hdc';
@@ -48,6 +48,12 @@ export default function ShowManagerTab() {
     return m;
   }, [data.metaRows]);
   const managedCount = (p) => managedByPoc.get(p)?.size ?? 0;
+  const metaById = useMemo(() => {
+    const m = new Map();
+    for (const r of data.metaRows || []) m.set(String(r.show_id), r);
+    return m;
+  }, [data.metaRows]);
+  const tableRef = useRef(null);
   const hdcIdx = useMemo(() => (data.hdcRows ? buildHdcIndex(data.hdcRows) : null), [data]);
   const fatIdx = useMemo(() => (data.fatRows ? buildFatIndex(data.fatRows) : null), [data]);
 
@@ -188,7 +194,7 @@ export default function ShowManagerTab() {
         <div className="card overflow-x-auto">
           <table className="data-table">
             <thead>
-              <tr><th>Manager</th><th>Shows managed</th><th>Active</th><th>Picked up</th><th>Concluded</th><th>Reached</th><th>Failed</th><th>Win rate</th></tr>
+              <tr><th>Manager</th><th>Shows managed</th><th>Active</th><th>Picked up</th><th>Concluded</th><th>Reached</th><th>Failed</th><th>Experiment success %</th></tr>
             </thead>
             <tbody>
               {rows.map(({ p, g }) => (
@@ -212,26 +218,35 @@ export default function ShowManagerTab() {
 
   // ---- B) Single manager — period-scoped ----
   const g = scopedFor(manager);
-  const showRows = [...g.shows].map((id) => {
+  const statusChip = (st) => st === 'active' ? 'chip-green' : st === 'experiment' ? 'chip-amber' : 'chip-grey';
+  // The manager's MANAGED shows (assigned active/experimental), with HDC rate &
+  // success rate over the selected window + any experiments on them.
+  const managedIds = [...(managedByPoc.get(manager) || [])];
+  const showRows = managedIds.map((id) => {
     const s = byId.get(id);
+    const meta = metaById.get(id);
+    const title = s?.title || meta?.show_name || `#${id}`;
+    const language = s?.language || meta?.language || '';
+    const category = s?.category || meta?.category_name || '';
+    const status = s?.status || normStatus(meta?.state) || normStatus(meta?.show_type) || '—';
     const hr = windowedHdcRate(data.hdcRows, id, win.start, win.end);
     const eps = fatIdx?.get(id)?.eps;
     const sr = eps ? windowedSuccessRate(eps, win.start, win.end) : { pct: null, n: 0 };
     const exps = g.exps.filter((e) => e.showId === id);
-    return { id, s, hr, sr, exps };
-  }).sort((a, b) => (a.s?.title || a.id).localeCompare(b.s?.title || b.id));
+    return { id, s, title, language, category, status, hr, sr, exps };
+  }).sort((a, b) => String(a.title).localeCompare(String(b.title)));
 
   const avg = (arr) => { const v = arr.filter((x) => x != null); return v.length ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 10) / 10 : null; };
   const avgHdc = avg(showRows.map((r) => (r.hr.n ? r.hr.pct : null)));
   const avgSr = avg(showRows.map((r) => (r.sr.n ? r.sr.pct : null)));
 
   const cards = [
-    ['Shows managed', managedCount(manager)],
+    ['Shows managed', managedCount(manager), true],
     ['Avg HDC rate', avgHdc == null ? '—' : avgHdc + '%'],
     ['Avg success rate', avgSr == null ? '—' : avgSr + '%'],
     ['Picked up', g.pickedUp],
     ['Concluded', g.concluded],
-    ['Win rate', g.win == null ? '—' : g.win + '%'],
+    ['Experiment success %', g.win == null ? '—' : g.win + '%'],
   ];
 
   return (
@@ -244,7 +259,12 @@ export default function ShowManagerTab() {
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
-        {cards.map(([k, v]) => (
+        {cards.map(([k, v, clickable]) => clickable ? (
+          <button key={k} className="card p-3 text-left hover:ring-2 hover:ring-slate-300 transition" onClick={() => tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+            <div className="text-[11px] text-slate-500">{k} <span className="text-slate-400">· view ↓</span></div>
+            <div className="text-xl font-semibold text-slate-800">{v}</div>
+          </button>
+        ) : (
           <div key={k} className="card p-3">
             <div className="text-[11px] text-slate-500">{k}</div>
             <div className="text-xl font-semibold text-slate-800">{v}</div>
@@ -252,32 +272,30 @@ export default function ShowManagerTab() {
         ))}
       </div>
 
-      <div className="card overflow-x-auto">
-        <div className="px-4 pt-3 text-sm font-semibold">Shows with experiments — {periodLabel(selPeriod)} <span className="hint">(HDC rate & success rate over the window)</span></div>
+      <div className="card overflow-x-auto" ref={tableRef}>
+        <div className="px-4 pt-3 text-sm font-semibold">Shows managed — {periodLabel(selPeriod)} <span className="hint">(HDC rate & success rate over the window)</span></div>
         <table className="data-table">
           <thead>
-            <tr><th>Show</th><th>HDC rate</th><th>Success rate</th><th>Experiments</th><th>Target</th><th>Verdict</th></tr>
+            <tr><th>Show</th><th>Status</th><th>HDC rate</th><th>Success rate</th><th>Experiments</th><th>Verdict</th></tr>
           </thead>
           <tbody>
             {showRows.length ? showRows.map((r) => (
-              <tr key={r.id} className="row-clickable" onClick={() => r.s && openDeepDive(r.s.id)}>
+              <tr key={r.id} className="row-clickable" onClick={() => openDeepDive(r.id)}>
                 <td>
-                  <div className="font-medium">{r.s?.title || `#${r.id}`}</div>
-                  {r.s && (
-                    <div className="mt-1 flex gap-1 flex-wrap">
-                      <span className="chip chip-blue">{LANG_NAMES[r.s.language] || r.s.language || '?'}</span>
-                      {r.s.category && <span className="chip chip-purple">{r.s.category}</span>}
-                    </div>
-                  )}
+                  <div className="font-medium">{r.title}</div>
+                  <div className="mt-1 flex gap-1 flex-wrap">
+                    {r.language && <span className="chip chip-blue">{LANG_NAMES[r.language] || r.language}</span>}
+                    {r.category && <span className="chip chip-purple">{r.category}</span>}
+                  </div>
                 </td>
+                <td><span className={'chip ' + statusChip(r.status)}>{r.status}</span></td>
                 <td>{r.hr.pct == null ? <span className="text-slate-300">—</span> : <span className="font-semibold">{r.hr.pct}%</span>}{r.hr.n ? <div className="hint">{r.hr.hdc}/{r.hr.n}</div> : null}</td>
                 <td>{r.sr.pct == null ? <span className="text-slate-300">—</span> : <span className="font-semibold">{r.sr.pct}%</span>}{r.sr.n ? <div className="hint">{r.sr.pass}/{r.sr.n}</div> : null}</td>
-                <td><div className="flex flex-col gap-1">{r.exps.map((e) => <span key={e.id} className="chip chip-purple whitespace-nowrap">{metricLabel(e.metric)}</span>)}</div></td>
-                <td className="text-sm text-slate-600"><div className="flex flex-col gap-1">{r.exps.map((e) => <span key={e.id}>{targetText(e.target)}</span>)}</div></td>
-                <td><div className="flex flex-col gap-1">{r.exps.map((e) => { const vm = VERDICT_META[e.verdict] || VERDICT_META.tracking; return <span key={e.id} className={'chip ' + vm.chip}>{vm.label}</span>; })}</div></td>
+                <td>{r.exps.length ? <div className="flex flex-col gap-1">{r.exps.map((e) => <span key={e.id} className="chip chip-purple whitespace-nowrap" title={targetText(e.target)}>{metricLabel(e.metric)}</span>)}</div> : <span className="text-slate-300">—</span>}</td>
+                <td>{r.exps.length ? <div className="flex flex-col gap-1">{r.exps.map((e) => { const vm = VERDICT_META[e.verdict] || VERDICT_META.tracking; return <span key={e.id} className={'chip ' + vm.chip}>{vm.label}</span>; })}</div> : <span className="text-slate-300">—</span>}</td>
               </tr>
             )) : (
-              <tr><td colSpan={6} className="text-center text-slate-400 py-6">No experiments for {manager} in {periodLabel(selPeriod)}.</td></tr>
+              <tr><td colSpan={6} className="text-center text-slate-400 py-6">No active/experimental shows assigned to {manager}.</td></tr>
             )}
           </tbody>
         </table>
