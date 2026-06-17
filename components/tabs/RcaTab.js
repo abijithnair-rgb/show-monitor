@@ -83,17 +83,17 @@ export default function RcaTab() {
       <div className="text-sm font-semibold mb-2">{title}</div>
       <table className="data-table">
         <thead>
-          <tr><th>{driverNoun}</th><th>L0 (D-2)</th><th>L0 (D-3)</th><th>Net Δ</th><th>View pass% (D-2)</th><th>View pass% (D-3)</th></tr>
+          <tr><th>{driverNoun}</th><th>L0 (D-3)</th><th>L0 (D-2)</th><th>Net Δ</th><th>View pass% (D-3)</th><th>View pass% (D-2)</th></tr>
         </thead>
         <tbody>
           {data.rows.map((g) => (
             <tr key={g.key} className={g.key === data.driverKey ? 'bg-amber-50' : ''}>
               <td className="font-medium">{g.key}{g.key === data.driverKey && <span className="chip chip-amber ml-2">driver</span>}</td>
-              <td>{g.l0_current}</td>
               <td>{g.l0_prior}</td>
+              <td>{g.l0_current}</td>
               <td style={{ color: g.l0_delta > 0 ? '#16a34a' : g.l0_delta < 0 ? '#dc2626' : '#64748b', fontWeight: 600 }}>{g.l0_delta > 0 ? '+' : ''}{g.l0_delta}</td>
-              <td>{fmtVal(g.viewPassPct_current, '%')}</td>
               <td>{fmtVal(g.viewPassPct_prior, '%')}</td>
+              <td>{fmtVal(g.viewPassPct_current, '%')}</td>
             </tr>
           ))}
         </tbody>
@@ -136,14 +136,14 @@ export default function RcaTab() {
         </div>
         <div className="flex items-end gap-2">
           <label className="text-xs text-slate-500 flex flex-col gap-1">
-            D-2 (current)
-            <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={curSel} onChange={(e) => setDCur(e.target.value)}>
+            D-3 (compare)
+            <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={priSel} onChange={(e) => setDPri(e.target.value)}>
               {dates.map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
           </label>
           <label className="text-xs text-slate-500 flex flex-col gap-1">
-            D-3 (compare)
-            <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={priSel} onChange={(e) => setDPri(e.target.value)}>
+            D-2 (current)
+            <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={curSel} onChange={(e) => setDCur(e.target.value)}>
               {dates.map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
           </label>
@@ -163,24 +163,24 @@ export default function RcaTab() {
         </ul>
       </div>
 
-      {/* §1 headline numbers — D-2 first */}
+      {/* §1 headline numbers — chronological: D-3 then D-2 */}
       <div className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2">Day-level headline numbers</div>
       <div className="grid lg:grid-cols-2 gap-3 mb-5">
-        <HeadlineCard label="D-2 (current)" day={curSel} h={hCurrent} n={rca.nCurrent} primary />
         <HeadlineCard label="D-3 (compare)" day={priSel} h={hPrior} n={rca.nPrior} />
+        <HeadlineCard label="D-2 (current)" day={curSel} h={hCurrent} n={rca.nCurrent} primary />
       </div>
 
       {/* §2 deltas */}
       <div className="card p-4 mb-5">
         <div className="text-sm font-semibold mb-2">Key deltas <span className="hint">(D-2 vs D-3)</span></div>
         <table className="data-table">
-          <thead><tr><th>Metric</th><th>D-2</th><th>D-3</th><th>Δ</th><th>% Δ</th><th>Direction</th></tr></thead>
+          <thead><tr><th>Metric</th><th>D-3</th><th>D-2</th><th>Δ</th><th>% Δ</th><th>Direction</th></tr></thead>
           <tbody>
             {dlt.rows.map((m) => (
               <tr key={m.key}>
                 <td className="font-medium">{m.label}{m.key === 'p90Threshold' && dlt.thresholdMoved && <span className="chip chip-amber ml-2">moved</span>}</td>
-                <td>{fmtVal(m.current, m.unit)}</td>
                 <td>{fmtVal(m.prior, m.unit)}</td>
+                <td>{fmtVal(m.current, m.unit)}</td>
                 <td style={{ fontWeight: 600 }}>{m.abs == null ? '—' : `${m.abs > 0 ? '+' : ''}${m.abs}${m.unit || ''}`}</td>
                 <td className="hint">{m.pctDelta == null ? '—' : `${m.pctDelta > 0 ? '+' : ''}${m.pctDelta}%`}</td>
                 <td><DirChip dir={m.dir} /></td>
@@ -195,11 +195,11 @@ export default function RcaTab() {
       <GroupTable title="By BU" data={bu} driverNoun="BU" />
       <GroupTable title="By show manager" data={mgr} driverNoun="Manager" />
 
-      {/* §5 L0 lists — D-2 first */}
+      {/* §5 L0 lists — chronological: D-3 then D-2 */}
       <div className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2 mt-2">L0 series</div>
       <div className="grid lg:grid-cols-2 gap-3">
-        <L0Table label="D-2 (current)" day={curSel} list={listCurrent} />
         <L0Table label="D-3 (compare)" day={priSel} list={listPrior} />
+        <L0Table label="D-2 (current)" day={curSel} list={listCurrent} />
       </div>
 
       {/* Regional-language RCA */}
