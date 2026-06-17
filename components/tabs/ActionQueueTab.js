@@ -3,7 +3,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildModel, buildFatIndex } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
-import { metricSnapshot, currentFor, reviewDue, evalVerdict, VERDICT_META, metricLabel, canAssign, POCS, defaultMetricForReasons } from '@/lib/ownership';
+import { metricSnapshot, currentFor, reviewDue, evalVerdict, VERDICT_META, metricLabel, canAssign, ROSTER, defaultMetricForReasons } from '@/lib/ownership';
 import { successRate } from '@/lib/metrics';
 import PickupPanel from '@/components/PickupPanel';
 import { fmtDate, weeksAgo, timeAgo, fmtPct, fmtNum, num, LANG_NAMES } from '@/lib/format';
@@ -296,7 +296,7 @@ export default function ActionQueueTab() {
                 className="border border-slate-300 rounded-md px-2 py-1 text-xs"
               >
                 <option value="">select your name…</option>
-                {POCS.map((p) => <option key={p} value={p}>{p}</option>)}
+                {ROSTER.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
             )}
           </div>

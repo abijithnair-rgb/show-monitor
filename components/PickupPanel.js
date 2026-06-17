@@ -6,7 +6,7 @@ import {
   METRIC_OPTIONS, metricLabel, reviewDue, todayStr,
   evalVerdict, VERDICT_META, progressLine, sincePickupParts,
   srTargetOptions, LABEL_BANDS, LABEL_MAX, EXPERIMENT_MAX_DAYS, labelDefaultOp, makeLabelTarget, impliedTarget,
-  targetText, trackedValueText, POCS,
+  targetText, trackedValueText, POCS, canManageClaim,
 } from '@/lib/ownership';
 
 // Hoisted (stable identity so inputs don't remount on keystroke).
@@ -87,7 +87,9 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
   function onMetricChange(m) { setMetric(m); setSrTargetId(''); }
   function onBandChange(b) { setLabelBand(b); setLabelOp(labelDefaultOp(b)); }
 
-  const isOwner = claim && userName && claim.by === userName;
+  // Owner OR a manager may edit/conclude/discard this experiment.
+  const canManage = canManageClaim(claim, userName);
+  const manageByManager = canManage && claim && claim.by !== userName; // editing someone else's
   const verdict = claim ? evalVerdict(claim, snapshotNow) : null;
   const vMeta = verdict ? VERDICT_META[verdict] : null;
   const due = reviewDue(claim);
@@ -290,14 +292,15 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
         <div className="flex flex-col gap-3">
           {summary}
           <div className="flex gap-4 flex-wrap items-end">
-            <DateField label="Actions to be taken by" value={actionDate} set={setActionDate} readOnly={!isOwner} />
-            <DateField label="To be reviewed on" value={reviewDate} set={setReviewDate} readOnly={!isOwner} />
-            {isOwner && datesChanged && (
+            <DateField label="Actions to be taken by" value={actionDate} set={setActionDate} readOnly={!canManage} />
+            <DateField label="To be reviewed on" value={reviewDate} set={setReviewDate} readOnly={!canManage} />
+            {canManage && datesChanged && (
               <button className="btn btn-ghost text-xs" disabled={busy} onClick={saveDates}>{busy ? 'Saving…' : 'Save dates'}</button>
             )}
           </div>
           {(() => { const p = sincePickupParts(claim.snapshot, snapshotNow); return p.length ? <Numbers title="Since pickup" snap={snapshotNow} /> : null; })()}
-          {isOwner && !concluding && (
+          {manageByManager && <div className="hint">Managing as {userName} (manager) — this experiment is owned by {claim.by}.</div>}
+          {canManage && !concluding && (
             <div className="flex gap-3 items-center flex-wrap text-xs">
               {verdict !== 'reached' && <button className="text-emerald-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => override('reached')}>Mark reached</button>}
               {verdict !== 'failed' && <button className="text-red-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => override('failed')}>Mark failed</button>}
@@ -307,7 +310,7 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
               <button className="text-slate-400 hover:text-slate-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => run(() => releaseShow(claim.id))}>Discard</button>
             </div>
           )}
-          {isOwner && concluding && (
+          {canManage && concluding && (
             <div className="rounded-md border border-slate-200 bg-white p-2 flex flex-col gap-2">
               <div className="text-xs text-slate-600">
                 Concluding as <span className={'chip ' + (vMeta?.chip || 'chip-grey')}>{vMeta?.label || verdict}</span> — result: <b>{trackedValueText(claim.target, snapshotNow)}</b> (target: {targetText(claim.target)}).
@@ -324,7 +327,7 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
               </div>
             </div>
           )}
-          {!isOwner && <div className="hint">Only {claim.by} (the owner) can update this experiment.</div>}
+          {!canManage && <div className="hint">Only {claim.by} (the owner) or a manager can update this experiment.</div>}
         </div>
       )}
     </div>

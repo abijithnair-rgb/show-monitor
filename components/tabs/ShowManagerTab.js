@@ -5,7 +5,7 @@ import { buildModel, buildFatIndex, normStatus } from '@/lib/model';
 import { buildHdcIndex, windowedHdcRate } from '@/lib/hdc';
 import { windowedSuccessRate } from '@/lib/metrics';
 import {
-  POCS, currentFor, metricLabel, targetText, trackedValueText, evalVerdict, VERDICT_META, reviewDue,
+  ROSTER, currentFor, metricLabel, targetText, trackedValueText, evalVerdict, VERDICT_META, reviewDue,
   weekKey, monthKey, weekRange, monthRange, todayStr,
 } from '@/lib/ownership';
 import { fmtDate, LANG_NAMES } from '@/lib/format';
@@ -22,7 +22,7 @@ export default function ShowManagerTab() {
   const userName = useStore((s) => s.userName);
   const openDeepDive = useStore((s) => s.openDeepDive);
 
-  const [manager, setManager] = useState(POCS.includes(userName) ? userName : '');
+  const [manager, setManager] = useState(ROSTER.includes(userName) ? userName : '');
   const [granularity, setGranularity] = useState('weekly'); // 'weekly' | 'monthly'
   const [periodSel, setPeriodSel] = useState(''); // chosen period key
   const [detailView, setDetailView] = useState('experiments'); // 'experiments' | 'shows'
@@ -37,14 +37,14 @@ export default function ShowManagerTab() {
   // else the query's show_manager), so Explorer assignments count here too.
   const managedByPoc = useMemo(() => {
     const m = new Map();
-    POCS.forEach((p) => m.set(p, new Set()));
+    ROSTER.forEach((p) => m.set(p, new Set()));
     const firstTok = (v) => String(v || '').trim().toLowerCase().split(/[\s._@]+/)[0];
     for (const s of model) {
       const mgr = s.manager;
       if (!mgr) continue;
       if (s.status !== 'active' && s.status !== 'experiment') continue;
       const tok = firstTok(mgr);
-      const poc = POCS.find((p) => p.toLowerCase() === tok || p.toLowerCase() === String(mgr).trim().toLowerCase());
+      const poc = ROSTER.find((p) => p.toLowerCase() === tok || p.toLowerCase() === String(mgr).trim().toLowerCase());
       if (poc) m.get(poc).add(String(s.id));
     }
     return m;
@@ -164,7 +164,7 @@ export default function ShowManagerTab() {
           Manager
           <select className="border border-slate-300 rounded-md px-2 py-1.5 text-sm text-slate-800" value={manager} onChange={(e) => setManager(e.target.value)}>
             <option value="">All managers</option>
-            {POCS.map((p) => <option key={p} value={p}>{p}</option>)}
+            {ROSTER.map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
         </label>
         <div className="inline-flex rounded-md border border-slate-300 overflow-hidden text-xs self-end">
@@ -187,7 +187,7 @@ export default function ShowManagerTab() {
 
   // ---- A) All managers — period-scoped leaderboard ----
   if (!manager) {
-    const rows = POCS.map((p) => ({ p, g: scopedFor(p) }))
+    const rows = ROSTER.map((p) => ({ p, g: scopedFor(p) }))
       .sort((a, b) => b.g.exps.length - a.g.exps.length || a.p.localeCompare(b.p));
     return (
       <div>
