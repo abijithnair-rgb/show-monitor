@@ -34,12 +34,17 @@ export default function RcaTab() {
     () => (rcaRows || []).filter((r) => r.level === 'HDC_SERIES').map(normalizeSeriesRow),
     [rcaRows]
   );
-  const dates = useMemo(() => seriesDates(seriesRows), [seriesRows]);
-  // D-2 = the day we're currently at (most recent); D-3 = the comparison day.
-  const [dCur, setDCur] = useState('');   // D-2
-  const [dPri, setDPri] = useState('');   // D-3
-  const curSel = dCur || dates[0] || '';
-  const priSel = dPri || dates[1] || dates[0] || '';
+  const dates = useMemo(() => seriesDates(seriesRows), [seriesRows]); // newest first
+  // Two day selections. D-2 (current) is ALWAYS the more-recent of the two; D-3
+  // (compare) is the older — derived from the actual dates, not the dropdown
+  // position, so the labels can never be switched relative to the data.
+  const [sel1, setSel1] = useState('');
+  const [sel2, setSel2] = useState('');
+  const pick1 = sel1 || dates[0] || '';            // defaults: newest
+  const pick2 = sel2 || dates[1] || dates[0] || ''; // defaults: 2nd newest
+  // curSel = D-2 = the newer date; priSel = D-3 = the older date.
+  const curSel = pick1 >= pick2 ? pick1 : pick2;
+  const priSel = pick1 >= pick2 ? pick2 : pick1;
 
   const rca = useMemo(
     () => (curSel && priSel ? buildHdcRca(seriesRows, curSel, priSel) : null),
@@ -136,14 +141,14 @@ export default function RcaTab() {
         </div>
         <div className="flex items-end gap-2">
           <label className="text-xs text-slate-500 flex flex-col gap-1">
-            D-3 (compare)
-            <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={priSel} onChange={(e) => setDPri(e.target.value)}>
+            D-3 (compare · older)
+            <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={priSel} onChange={(e) => setSel2(e.target.value)}>
               {dates.map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
           </label>
           <label className="text-xs text-slate-500 flex flex-col gap-1">
-            D-2 (current)
-            <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={curSel} onChange={(e) => setDCur(e.target.value)}>
+            D-2 (current · newer)
+            <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={curSel} onChange={(e) => setSel1(e.target.value)}>
               {dates.map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
           </label>
