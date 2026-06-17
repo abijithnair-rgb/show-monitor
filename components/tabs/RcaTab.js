@@ -1,7 +1,7 @@
 'use client';
 import { useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { fmtNum, num } from '@/lib/format';
+import { fmtNum, num, addDays } from '@/lib/format';
 import { buildHdcRca, seriesDates, normalizeSeriesRow } from '@/lib/hdcRca';
 import RegionalRca from '@/components/RegionalRca';
 
@@ -35,13 +35,22 @@ export default function RcaTab() {
     [rcaRows]
   );
   const dates = useMemo(() => seriesDates(seriesRows), [seriesRows]); // newest first
+  // Calendar defaults: D-2 = today − 2, D-3 = today − 3 (e.g. today 17th →
+  // D-2 = 15th, D-3 = 14th). Use the exact calendar dates when the data has them,
+  // else fall back to the two most-recent days present.
+  const today = useMemo(() => {
+    const d = new Date(); const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }, []);
+  const defCur = addDays(today, -2); // D-2
+  const defPri = addDays(today, -3); // D-3
   // Two day selections. D-2 (current) is ALWAYS the more-recent of the two; D-3
-  // (compare) is the older — derived from the actual dates, not the dropdown
-  // position, so the labels can never be switched relative to the data.
+  // (compare) the older — derived from the actual dates, not dropdown position,
+  // so the labels can never be switched relative to the data.
   const [sel1, setSel1] = useState('');
   const [sel2, setSel2] = useState('');
-  const pick1 = sel1 || dates[0] || '';            // defaults: newest
-  const pick2 = sel2 || dates[1] || dates[0] || ''; // defaults: 2nd newest
+  const pick1 = sel1 || (dates.includes(defCur) ? defCur : dates[0] || '');
+  const pick2 = sel2 || (dates.includes(defPri) ? defPri : dates[1] || dates[0] || '');
   // curSel = D-2 = the newer date; priSel = D-3 = the older date.
   const curSel = pick1 >= pick2 ? pick1 : pick2;
   const priSel = pick1 >= pick2 ? pick2 : pick1;
@@ -88,17 +97,17 @@ export default function RcaTab() {
       <div className="text-sm font-semibold mb-2">{title}</div>
       <table className="data-table">
         <thead>
-          <tr><th>{driverNoun}</th><th>L0 (D-3)</th><th>L0 (D-2)</th><th>Net Δ</th><th>View pass% (D-3)</th><th>View pass% (D-2)</th></tr>
+          <tr><th>{driverNoun}</th><th>L0 (D-2)</th><th>L0 (D-3)</th><th>Net Δ</th><th>View pass% (D-2)</th><th>View pass% (D-3)</th></tr>
         </thead>
         <tbody>
           {data.rows.map((g) => (
             <tr key={g.key} className={g.key === data.driverKey ? 'bg-amber-50' : ''}>
               <td className="font-medium">{g.key}{g.key === data.driverKey && <span className="chip chip-amber ml-2">driver</span>}</td>
-              <td>{g.l0_prior}</td>
               <td>{g.l0_current}</td>
+              <td>{g.l0_prior}</td>
               <td style={{ color: g.l0_delta > 0 ? '#16a34a' : g.l0_delta < 0 ? '#dc2626' : '#64748b', fontWeight: 600 }}>{g.l0_delta > 0 ? '+' : ''}{g.l0_delta}</td>
-              <td>{fmtVal(g.viewPassPct_prior, '%')}</td>
               <td>{fmtVal(g.viewPassPct_current, '%')}</td>
+              <td>{fmtVal(g.viewPassPct_prior, '%')}</td>
             </tr>
           ))}
         </tbody>
@@ -141,14 +150,14 @@ export default function RcaTab() {
         </div>
         <div className="flex items-end gap-2">
           <label className="text-xs text-slate-500 flex flex-col gap-1">
-            D-3 (compare · older)
-            <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={priSel} onChange={(e) => setSel2(e.target.value)}>
+            D-2 (current · newer)
+            <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={curSel} onChange={(e) => setSel1(e.target.value)}>
               {dates.map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
           </label>
           <label className="text-xs text-slate-500 flex flex-col gap-1">
-            D-2 (current · newer)
-            <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={curSel} onChange={(e) => setSel1(e.target.value)}>
+            D-3 (compare · older)
+            <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={priSel} onChange={(e) => setSel2(e.target.value)}>
               {dates.map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
           </label>
@@ -168,24 +177,24 @@ export default function RcaTab() {
         </ul>
       </div>
 
-      {/* §1 headline numbers — chronological: D-3 then D-2 */}
+      {/* §1 headline numbers — D-2 (current) first */}
       <div className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2">Day-level headline numbers</div>
       <div className="grid lg:grid-cols-2 gap-3 mb-5">
-        <HeadlineCard label="D-3 (compare)" day={priSel} h={hPrior} n={rca.nPrior} />
         <HeadlineCard label="D-2 (current)" day={curSel} h={hCurrent} n={rca.nCurrent} primary />
+        <HeadlineCard label="D-3 (compare)" day={priSel} h={hPrior} n={rca.nPrior} />
       </div>
 
       {/* §2 deltas */}
       <div className="card p-4 mb-5">
         <div className="text-sm font-semibold mb-2">Key deltas <span className="hint">(D-2 vs D-3)</span></div>
         <table className="data-table">
-          <thead><tr><th>Metric</th><th>D-3</th><th>D-2</th><th>Δ</th><th>% Δ</th><th>Direction</th></tr></thead>
+          <thead><tr><th>Metric</th><th>D-2</th><th>D-3</th><th>Δ</th><th>% Δ</th><th>Direction</th></tr></thead>
           <tbody>
             {dlt.rows.map((m) => (
               <tr key={m.key}>
                 <td className="font-medium">{m.label}{m.key === 'p90Threshold' && dlt.thresholdMoved && <span className="chip chip-amber ml-2">moved</span>}</td>
-                <td>{fmtVal(m.prior, m.unit)}</td>
                 <td>{fmtVal(m.current, m.unit)}</td>
+                <td>{fmtVal(m.prior, m.unit)}</td>
                 <td style={{ fontWeight: 600 }}>{m.abs == null ? '—' : `${m.abs > 0 ? '+' : ''}${m.abs}${m.unit || ''}`}</td>
                 <td className="hint">{m.pctDelta == null ? '—' : `${m.pctDelta > 0 ? '+' : ''}${m.pctDelta}%`}</td>
                 <td><DirChip dir={m.dir} /></td>
@@ -200,11 +209,11 @@ export default function RcaTab() {
       <GroupTable title="By BU" data={bu} driverNoun="BU" />
       <GroupTable title="By show manager" data={mgr} driverNoun="Manager" />
 
-      {/* §5 L0 lists — chronological: D-3 then D-2 */}
+      {/* §5 L0 lists — D-2 (current) first */}
       <div className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2 mt-2">L0 series</div>
       <div className="grid lg:grid-cols-2 gap-3">
-        <L0Table label="D-3 (compare)" day={priSel} list={listPrior} />
         <L0Table label="D-2 (current)" day={curSel} list={listCurrent} />
+        <L0Table label="D-3 (compare)" day={priSel} list={listPrior} />
       </div>
 
       {/* Regional-language RCA */}
