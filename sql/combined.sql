@@ -1676,8 +1676,13 @@ LEFT JOIN show_meta sm
   ON cs.id = sm.show_id
 
 LEFT JOIN (
-  SELECT DISTINCT show_id, show_manager
+  -- One non-null show_manager per show. Without IGNORE NULLS / GROUP BY, a show
+  -- with both a null and a real manager row would emit duplicate meta rows and
+  -- blank the manager for some shows (notably experiments).
+  SELECT show_id, ANY_VALUE(show_manager) AS show_manager
   FROM `seekho-c084b.analytics_content.show_detail`
+  WHERE show_manager IS NOT NULL
+  GROUP BY show_id
 ) sd
   ON cs.id = sd.show_id
 
