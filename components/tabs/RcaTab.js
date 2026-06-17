@@ -3,9 +3,12 @@ import { useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { fmtNum, num } from '@/lib/format';
 import { buildHdcRca, seriesDates, normalizeSeriesRow } from '@/lib/hdcRca';
+import RegionalRca from '@/components/RegionalRca';
 
-// Hindi day-over-day HDC RCA. Reads the per-series detail rows (level='HDC_SERIES')
-// merged into the Daily RCA query and compares two publish days across 6 sections.
+// Daily RCA. Hindi day-over-day HDC view (D-2 current vs D-3) on top, with the
+// regional-language label-led RCA below.
+
+const FINDING_DOT = { bad: '#dc2626', good: '#16a34a', warn: '#d97706', info: '#64748b' };
 
 function Metric({ label, big, sub, tone }) {
   return (
@@ -32,34 +35,36 @@ export default function RcaTab() {
     [rcaRows]
   );
   const dates = useMemo(() => seriesDates(seriesRows), [seriesRows]);
-  // default: day_b = most recent, day_a = the one before it
-  const [dayA, setDayA] = useState('');
-  const [dayB, setDayB] = useState('');
-  const bSel = dayB || dates[0] || '';
-  const aSel = dayA || dates[1] || dates[0] || '';
+  // D-2 = the day we're currently at (most recent); D-3 = the comparison day.
+  const [dCur, setDCur] = useState('');   // D-2
+  const [dPri, setDPri] = useState('');   // D-3
+  const curSel = dCur || dates[0] || '';
+  const priSel = dPri || dates[1] || dates[0] || '';
 
   const rca = useMemo(
-    () => (aSel && bSel ? buildHdcRca(seriesRows, aSel, bSel) : null),
-    [seriesRows, aSel, bSel]
+    () => (curSel && priSel ? buildHdcRca(seriesRows, curSel, priSel) : null),
+    [seriesRows, curSel, priSel]
   );
 
   if (!seriesRows.length) {
     return (
       <div>
-        <h2 className="text-xl font-semibold mb-1">Daily RCA — Hindi HDC (day over day)</h2>
-        <p className="text-sm text-slate-500 mb-4">Compares HDC performance between two publish days for Hindi, with BU & show-manager breakdowns and an L0 series list.</p>
+        <h2 className="text-xl font-semibold mb-1">Daily RCA — Hindi HDC (D-2 vs D-3)</h2>
+        <p className="text-sm text-slate-500 mb-4">Compares HDC performance on D-2 (the latest settled day) against D-3, with BU & manager breakdowns and the L0 series list. Regional-language RCA shows below.</p>
         <div className="card p-8 text-center text-slate-400">
           No per-series HDC rows found. This view needs the day-over-day series detail (level <code>HDC_SERIES</code>) — re-run the Daily RCA query (qid 109927) after the merge, then sync, or load the sample data on the Data tab.
         </div>
+        <RegionalRca rcaRows={rcaRows} />
       </div>
     );
   }
 
-  const { hA, hB, dlt, bu, mgr, listA, listB, verdict } = rca;
+  const { hPrior, hCurrent, dlt, bu, mgr, listPrior, listCurrent, report } = rca;
 
-  const HeadlineCard = ({ title, h, n }) => (
-    <div className="card p-4">
-      <div className="text-sm font-semibold mb-2">{title} <span className="hint">({n} series)</span></div>
+  // headline card; primary = D-2 highlighted
+  const HeadlineCard = ({ label, day, h, n, primary }) => (
+    <div className="card p-4" style={primary ? { borderColor: '#94a3b8' } : undefined}>
+      <div className="text-sm font-semibold mb-2">{label} <span className="hint">· {day} · {n} series</span></div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Metric label="L0 count" big={h.l0} tone="#16a34a" sub={`HDC ${fmtVal(h.hdcPct, '%')}`} />
         <Metric label="View pass %" big={fmtVal(h.viewPassPct, '%')} />
@@ -72,22 +77,23 @@ export default function RcaTab() {
     </div>
   );
 
+  // group table — current(D-2) column first, then prior(D-3)
   const GroupTable = ({ title, data, driverNoun }) => (
     <div className="card p-4 mb-3">
       <div className="text-sm font-semibold mb-2">{title}</div>
       <table className="data-table">
         <thead>
-          <tr><th>{driverNoun}</th><th>L0 (A)</th><th>L0 (B)</th><th>Net Δ</th><th>View pass% (A)</th><th>View pass% (B)</th></tr>
+          <tr><th>{driverNoun}</th><th>L0 (D-2)</th><th>L0 (D-3)</th><th>Net Δ</th><th>View pass% (D-2)</th><th>View pass% (D-3)</th></tr>
         </thead>
         <tbody>
           {data.rows.map((g) => (
             <tr key={g.key} className={g.key === data.driverKey ? 'bg-amber-50' : ''}>
               <td className="font-medium">{g.key}{g.key === data.driverKey && <span className="chip chip-amber ml-2">driver</span>}</td>
-              <td>{g.l0_a}</td>
-              <td>{g.l0_b}</td>
+              <td>{g.l0_current}</td>
+              <td>{g.l0_prior}</td>
               <td style={{ color: g.l0_delta > 0 ? '#16a34a' : g.l0_delta < 0 ? '#dc2626' : '#64748b', fontWeight: 600 }}>{g.l0_delta > 0 ? '+' : ''}{g.l0_delta}</td>
-              <td>{fmtVal(g.viewPassPct_a, '%')}</td>
-              <td>{fmtVal(g.viewPassPct_b, '%')}</td>
+              <td>{fmtVal(g.viewPassPct_current, '%')}</td>
+              <td>{fmtVal(g.viewPassPct_prior, '%')}</td>
             </tr>
           ))}
         </tbody>
@@ -95,9 +101,9 @@ export default function RcaTab() {
     </div>
   );
 
-  const L0Table = ({ title, list }) => (
+  const L0Table = ({ label, day, list }) => (
     <div className="card p-4 mb-3">
-      <div className="text-sm font-semibold mb-2">{title} <span className="hint">({list.length} L0)</span></div>
+      <div className="text-sm font-semibold mb-2">{label} <span className="hint">· {day} · {list.length} L0</span></div>
       {list.length ? (
         <table className="data-table">
           <thead>
@@ -125,50 +131,56 @@ export default function RcaTab() {
     <div>
       <div className="flex items-end justify-between mb-3 flex-wrap gap-2">
         <div>
-          <h2 className="text-xl font-semibold">Daily RCA — Hindi HDC (day over day)</h2>
-          <p className="text-sm text-slate-500">HDC performance for Hindi compared between two publish days, with BU & manager breakdowns and the L0 series list.</p>
+          <h2 className="text-xl font-semibold">Daily RCA — Hindi HDC (D-2 vs D-3)</h2>
+          <p className="text-sm text-slate-500">Where we are now (<b>D-2</b>) compared against <b>D-3</b>, with BU & manager breakdowns and the L0 series list. Regional-language RCA is below.</p>
         </div>
         <div className="flex items-end gap-2">
           <label className="text-xs text-slate-500 flex flex-col gap-1">
-            Earlier day (A)
-            <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={aSel} onChange={(e) => setDayA(e.target.value)}>
+            D-2 (current)
+            <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={curSel} onChange={(e) => setDCur(e.target.value)}>
               {dates.map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
           </label>
           <label className="text-xs text-slate-500 flex flex-col gap-1">
-            Later day (B)
-            <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={bSel} onChange={(e) => setDayB(e.target.value)}>
+            D-3 (compare)
+            <select className="border border-slate-300 rounded-md px-3 py-2 text-sm" value={priSel} onChange={(e) => setDPri(e.target.value)}>
               {dates.map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
           </label>
         </div>
       </div>
 
-      {/* §6 verdict up top as the executive read */}
+      {/* §6 — executive RCA report */}
       <div className="card p-4 mb-5" style={{ background: '#fafafa', borderColor: '#cbd5e1' }}>
-        <div className="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Root-cause verdict</div>
-        <p className="text-sm text-slate-700">{verdict}</p>
-        {dlt.strongerSignal && <p className="text-xs text-emerald-700 mt-1">Threshold rose while L0 still increased — a genuinely stronger signal, not an easier bar.</p>}
+        <div className="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Executive RCA — D-2 ({curSel}) vs D-3 ({priSel})</div>
+        <ul className="space-y-1.5">
+          {report.map((f, i) => (
+            <li key={i} className="flex gap-2 text-sm text-slate-700">
+              <span className="mt-1.5 shrink-0 rounded-full" style={{ width: 7, height: 7, background: FINDING_DOT[f.tone] || FINDING_DOT.info }} />
+              <span className={f.kind === 'tldr' ? 'font-medium' : ''}>{f.text}</span>
+            </li>
+          ))}
+        </ul>
       </div>
 
-      {/* §1 headline numbers */}
+      {/* §1 headline numbers — D-2 first */}
       <div className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2">Day-level headline numbers</div>
       <div className="grid lg:grid-cols-2 gap-3 mb-5">
-        <HeadlineCard title={`Day A · ${aSel}`} h={hA} n={rca.nA} />
-        <HeadlineCard title={`Day B · ${bSel}`} h={hB} n={rca.nB} />
+        <HeadlineCard label="D-2 (current)" day={curSel} h={hCurrent} n={rca.nCurrent} primary />
+        <HeadlineCard label="D-3 (compare)" day={priSel} h={hPrior} n={rca.nPrior} />
       </div>
 
       {/* §2 deltas */}
       <div className="card p-4 mb-5">
-        <div className="text-sm font-semibold mb-2">Key deltas <span className="hint">(B vs A)</span></div>
+        <div className="text-sm font-semibold mb-2">Key deltas <span className="hint">(D-2 vs D-3)</span></div>
         <table className="data-table">
-          <thead><tr><th>Metric</th><th>Day A</th><th>Day B</th><th>Δ</th><th>% Δ</th><th>Direction</th></tr></thead>
+          <thead><tr><th>Metric</th><th>D-2</th><th>D-3</th><th>Δ</th><th>% Δ</th><th>Direction</th></tr></thead>
           <tbody>
             {dlt.rows.map((m) => (
               <tr key={m.key}>
                 <td className="font-medium">{m.label}{m.key === 'p90Threshold' && dlt.thresholdMoved && <span className="chip chip-amber ml-2">moved</span>}</td>
-                <td>{fmtVal(m.a, m.unit)}</td>
-                <td>{fmtVal(m.b, m.unit)}</td>
+                <td>{fmtVal(m.current, m.unit)}</td>
+                <td>{fmtVal(m.prior, m.unit)}</td>
                 <td style={{ fontWeight: 600 }}>{m.abs == null ? '—' : `${m.abs > 0 ? '+' : ''}${m.abs}${m.unit || ''}`}</td>
                 <td className="hint">{m.pctDelta == null ? '—' : `${m.pctDelta > 0 ? '+' : ''}${m.pctDelta}%`}</td>
                 <td><DirChip dir={m.dir} /></td>
@@ -183,12 +195,15 @@ export default function RcaTab() {
       <GroupTable title="By BU" data={bu} driverNoun="BU" />
       <GroupTable title="By show manager" data={mgr} driverNoun="Manager" />
 
-      {/* §5 L0 lists */}
+      {/* §5 L0 lists — D-2 first */}
       <div className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2 mt-2">L0 series</div>
       <div className="grid lg:grid-cols-2 gap-3">
-        <L0Table title={`Day A · ${aSel}`} list={listA} />
-        <L0Table title={`Day B · ${bSel}`} list={listB} />
+        <L0Table label="D-2 (current)" day={curSel} list={listCurrent} />
+        <L0Table label="D-3 (compare)" day={priSel} list={listPrior} />
       </div>
+
+      {/* Regional-language RCA */}
+      <RegionalRca rcaRows={rcaRows} />
     </div>
   );
 }
