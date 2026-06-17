@@ -1,7 +1,7 @@
 'use client';
 import { useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { buildModel, buildFatIndex } from '@/lib/model';
+import { buildModel, buildFatIndex, normStatus } from '@/lib/model';
 import { buildHdcIndex, windowedHdcRate } from '@/lib/hdc';
 import { windowedSuccessRate } from '@/lib/metrics';
 import {
@@ -28,6 +28,26 @@ export default function ShowManagerTab() {
 
   const model = useMemo(() => buildModel(data), [data]);
   const byId = useMemo(() => new Map(model.map((s) => [String(s.id), s])), [model]);
+
+  // Shows each POC manages, from show_detail.show_manager (carried in metaRows),
+  // counting ONLY active/experimental shows. Match a manager name to a POC by
+  // first name (handles "Abijith" / "Abijith Nair" / "abijith@…").
+  const managedByPoc = useMemo(() => {
+    const m = new Map();
+    POCS.forEach((p) => m.set(p, new Set()));
+    const firstTok = (v) => String(v || '').trim().toLowerCase().split(/[\s._@]+/)[0];
+    for (const r of data.metaRows || []) {
+      const mgr = r.show_manager;
+      if (!mgr) continue;
+      const status = normStatus(r.state) || normStatus(r.show_type);
+      if (status !== 'active' && status !== 'experiment') continue;
+      const tok = firstTok(mgr);
+      const poc = POCS.find((p) => p.toLowerCase() === tok || p.toLowerCase() === String(mgr).trim().toLowerCase());
+      if (poc) m.get(poc).add(String(r.show_id));
+    }
+    return m;
+  }, [data.metaRows]);
+  const managedCount = (p) => managedByPoc.get(p)?.size ?? 0;
   const hdcIdx = useMemo(() => (data.hdcRows ? buildHdcIndex(data.hdcRows) : null), [data]);
   const fatIdx = useMemo(() => (data.fatRows ? buildFatIndex(data.fatRows) : null), [data]);
 
@@ -174,7 +194,7 @@ export default function ShowManagerTab() {
               {rows.map(({ p, g }) => (
                 <tr key={p} className="row-clickable" onClick={() => setManager(p)}>
                   <td className="font-medium text-slate-700">{p}</td>
-                  <td>{g.shows.size || <span className="text-slate-300">0</span>}</td>
+                  <td>{managedCount(p) || <span className="text-slate-300">0</span>}</td>
                   <td>{g.active || <span className="text-slate-300">0</span>}</td>
                   <td>{g.pickedUp || <span className="text-slate-300">0</span>}</td>
                   <td>{g.concluded || <span className="text-slate-300">0</span>}</td>
@@ -206,7 +226,7 @@ export default function ShowManagerTab() {
   const avgSr = avg(showRows.map((r) => (r.sr.n ? r.sr.pct : null)));
 
   const cards = [
-    ['Shows managed', g.shows.size],
+    ['Shows managed', managedCount(manager)],
     ['Avg HDC rate', avgHdc == null ? '—' : avgHdc + '%'],
     ['Avg success rate', avgSr == null ? '—' : avgSr + '%'],
     ['Picked up', g.pickedUp],
@@ -233,7 +253,7 @@ export default function ShowManagerTab() {
       </div>
 
       <div className="card overflow-x-auto">
-        <div className="px-4 pt-3 text-sm font-semibold">Shows managed — {periodLabel(selPeriod)} <span className="hint">({granularity === 'weekly' ? 'this week' : 'this month'}: HDC rate & success rate over the window)</span></div>
+        <div className="px-4 pt-3 text-sm font-semibold">Shows with experiments — {periodLabel(selPeriod)} <span className="hint">(HDC rate & success rate over the window)</span></div>
         <table className="data-table">
           <thead>
             <tr><th>Show</th><th>HDC rate</th><th>Success rate</th><th>Experiments</th><th>Target</th><th>Verdict</th></tr>
