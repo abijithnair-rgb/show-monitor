@@ -3,7 +3,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildModel, buildFatIndex } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
-import { metricSnapshot, currentFor, reviewDue, evalVerdict, VERDICT_META, metricLabel, canAssign } from '@/lib/ownership';
+import { metricSnapshot, currentFor, reviewDue, evalVerdict, VERDICT_META, metricLabel, canAssign, POCS } from '@/lib/ownership';
 import { successRate } from '@/lib/metrics';
 import PickupPanel from '@/components/PickupPanel';
 import { fmtDate, weeksAgo, timeAgo, fmtPct, fmtNum, num, LANG_NAMES } from '@/lib/format';
@@ -118,7 +118,6 @@ export default function ActionQueueTab() {
   const userName = useStore((s) => s.userName);
   const setUserName = useStore((s) => s.setUserName);
 
-  const [nameDraft, setNameDraft] = useState('');
   // which show's panel is open, and in which mode: { id, assign }
   const [expanded, setExpanded] = useState({ id: null, assign: false });
 
@@ -270,21 +269,17 @@ export default function ActionQueueTab() {
             {userName ? (
               <>
                 <span className="chip chip-blue">{userName}</span>
-                <button className="text-slate-400 hover:text-slate-700 underline" onClick={() => { setNameDraft(userName); setUserName(''); }}>change</button>
+                <button className="text-slate-400 hover:text-slate-700 underline" onClick={() => setUserName('')}>change</button>
               </>
             ) : (
-              <form
-                onSubmit={(e) => { e.preventDefault(); if (nameDraft.trim()) setUserName(nameDraft.trim()); }}
-                className="flex items-center gap-1"
+              <select
+                value=""
+                onChange={(e) => { if (e.target.value) setUserName(e.target.value); }}
+                className="border border-slate-300 rounded-md px-2 py-1 text-xs"
               >
-                <input
-                  value={nameDraft}
-                  onChange={(e) => setNameDraft(e.target.value)}
-                  placeholder="your name"
-                  className="border border-slate-300 rounded-md px-2 py-1 text-xs w-32"
-                />
-                <button type="submit" className="btn btn-ghost text-xs">Save</button>
-              </form>
+                <option value="">select your name…</option>
+                {POCS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
             )}
           </div>
         )}

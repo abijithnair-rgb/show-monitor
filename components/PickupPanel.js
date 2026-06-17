@@ -6,7 +6,7 @@ import {
   METRIC_OPTIONS, metricLabel, reviewDue, todayStr,
   evalVerdict, VERDICT_META, progressLine, sincePickupParts,
   srTargetOptions, LABEL_BANDS, LABEL_MAX, EXPERIMENT_MAX_DAYS, labelDefaultOp, makeLabelTarget, impliedTarget,
-  targetText,
+  targetText, POCS,
 } from '@/lib/ownership';
 
 // Hoisted (stable identity so inputs don't remount on keystroke).
@@ -166,8 +166,11 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
               {assign ? (
                 <>
                   <span className="text-slate-500">Assign to:</span>
-                  <input value={assignee} onChange={(e) => setAssignee(e.target.value)} placeholder="person's name"
-                    className="border border-slate-300 rounded-md px-2 py-1 text-xs w-40" />
+                  <select value={assignee} onChange={(e) => setAssignee(e.target.value)}
+                    className="border border-slate-300 rounded-md px-2 py-1 text-xs">
+                    <option value="">select a person…</option>
+                    {POCS.filter((p) => p.toLowerCase() !== String(userName).toLowerCase()).map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
                   <span className="hint">assigned by {userName || '—'}</span>
                 </>
               ) : (
@@ -175,8 +178,11 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
                   <span className="text-slate-500">Picked up:</span>
                   <span className="chip chip-blue">today · {fmtDate(todayStr())}</span>
                   {!userName && (
-                    <input value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} placeholder="your name"
-                      className="border border-slate-300 rounded-md px-2 py-1 text-xs w-32" />
+                    <select value={nameDraft} onChange={(e) => setNameDraft(e.target.value)}
+                      className="border border-slate-300 rounded-md px-2 py-1 text-xs">
+                      <option value="">select your name…</option>
+                      {POCS.map((p) => <option key={p} value={p}>{p}</option>)}
+                    </select>
                   )}
                 </>
               )}
