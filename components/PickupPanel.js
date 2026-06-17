@@ -258,7 +258,7 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
               <div className="hint">Measured on the videos this show posts between the "actions to be taken by" date and the review date — giving the POC time to act first.</div>
             )}
             {(metric === 'hook_fix' || metric === 'pace_fix' || metric === 'ending_fix') && (
-              <div className="hint">Judged by the review date: reached if the dominant failure is no longer {metric.replace('_fix', '')} by then, otherwise failed.</div>
+              <div className="hint">Reached when the show's drop-off is healthy (no dominant failure mode) by the review date — fixing the {metric.replace('_fix', '')} issue so nothing else is failing. Otherwise failed.</div>
             )}
             <label className="text-xs text-slate-500 flex flex-col gap-1">
               Remark
