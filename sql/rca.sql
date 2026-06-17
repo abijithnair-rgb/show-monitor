@@ -229,14 +229,23 @@ content_final AS (
 -- ===========================================================================
 -- LABEL ENGINE  (single source of truth for HDC=L0 and L1–L6)
 -- ===========================================================================
+-- Show-manager lookup (one per show) for the day-over-day HDC RCA detail block.
+lbl_show_manager AS (
+  SELECT show_id, ANY_VALUE(show_manager) AS show_manager
+  FROM `seekho-c084b.analytics_content.show_detail`
+  WHERE show_manager IS NOT NULL
+  GROUP BY show_id
+),
 lbl_series AS (
   SELECT cs.id AS series_id, cs.title AS series_title, cs.show_id, csh.title AS show_name,
+    COALESCE(sm.show_manager, 'Unassigned') AS show_manager,
     cs.language, COALESCE(bu.bu_name,'Other') AS bu_name, cs.duration_s,
     DATETIME(TIMESTAMP(cs.approved_on),'Asia/Kolkata') AS publish_ts_ist,
     DATETIME(TIMESTAMP_ADD(TIMESTAMP(cs.approved_on),INTERVAL 24 HOUR),'Asia/Kolkata') AS publish_24h_ts_ist,
     DATE(cs.approved_on,'Asia/Kolkata') AS publish_date
   FROM `seekho-c084b.seekho.courses_series` cs
   LEFT JOIN `seekho-c084b.seekho.courses_show` csh ON cs.show_id=csh.id
+  LEFT JOIN lbl_show_manager sm ON cs.show_id=sm.show_id
   LEFT JOIN seekho.users_creatorinfo ci ON cs.creator_id=ci.profile_id
   LEFT JOIN seekho.users_userprofile up ON ci.profile_id=up.user_ptr_id
   LEFT JOIN bu_mapping bu ON cs.category_id=bu.category_id
@@ -579,7 +588,17 @@ seg_unified AS (
         WHEN c.sr_pct > c.sr_7davg+10 THEN CONCAT('SR strong: ',CAST(c.sr_pct AS STRING),'% vs 7dAvg ',CAST(c.sr_7davg AS STRING),'%.')
         ELSE CONCAT('SR steady: ',CAST(c.sr_pct AS STRING),'%.')
       END
-    ) AS auto_rca
+    ) AS auto_rca,
+    -- day-over-day HDC RCA detail columns (populated only on HDC_SERIES rows)
+    CAST(NULL AS STRING)  AS hdc_series_title,
+    CAST(NULL AS INT64)   AS hdc_views_24h,
+    CAST(NULL AS FLOAT64) AS hdc_p90,
+    CAST(NULL AS FLOAT64) AS hdc_threshold_value,
+    CAST(NULL AS FLOAT64) AS hdc_target_cr,
+    CAST(NULL AS FLOAT64) AS hdc_achieved_cr,
+    CAST(NULL AS INT64)   AS hdc_view_pass,
+    CAST(NULL AS INT64)   AS hdc_cr_pass,
+    CAST(NULL AS DATE)    AS hdc_first_l0_date
   FROM dau_final a
   FULL OUTER JOIN content_final c ON a.level=c.level AND a.segment=c.segment AND a.date_=c.date_
   LEFT JOIN label_final l
@@ -629,15 +648,84 @@ show_unified AS (
          WHEN r.poor_l0_flag=1 THEN 'quality: low hit-rate vs BU'
          WHEN r.high_l45_flag=1 THEN 'quality: heavy low-view tail vs BU' ELSE NULL END AS hdc_attribution,
     CASE WHEN r.needs_supply_fix_flag=1 THEN 'supply gap vs frequency target' ELSE NULL END AS comovement_pattern,
-    r.show_recommendation AS auto_rca
+    r.show_recommendation AS auto_rca,
+    -- day-over-day HDC RCA detail columns (NULL on SHOW rows)
+    CAST(NULL AS STRING)  AS hdc_series_title,
+    CAST(NULL AS INT64)   AS hdc_views_24h,
+    CAST(NULL AS FLOAT64) AS hdc_p90,
+    CAST(NULL AS FLOAT64) AS hdc_threshold_value,
+    CAST(NULL AS FLOAT64) AS hdc_target_cr,
+    CAST(NULL AS FLOAT64) AS hdc_achieved_cr,
+    CAST(NULL AS INT64)   AS hdc_view_pass,
+    CAST(NULL AS INT64)   AS hdc_cr_pass,
+    CAST(NULL AS DATE)    AS hdc_first_l0_date
   FROM show_reco r
+),
+
+-- ===========================================================================
+-- UNIFY (C) — HDC_SERIES ROWS  (Hindi day-over-day RCA detail; one row/series)
+-- The tab compares two publish days and rolls these up client-side.
+-- ===========================================================================
+series_first_l0 AS (   -- earliest L0 publish_date per show within the window
+  SELECT show_id, MIN(publish_date) AS first_l0_date
+  FROM labeled2 WHERE hdc_flag=1 GROUP BY show_id
+),
+series_unified AS (
+  SELECT
+    DATE_ADD(end_date, INTERVAL 1 DAY) AS report_date,   -- run day (D-0)
+    'HDC_SERIES' AS level,
+    ls.bu_name AS segment,
+    l2.publish_date AS hdc_report_date,
+    ls.show_name, ls.show_manager,
+    CAST(NULL AS INT64) AS dau, CAST(NULL AS INT64) AS dau_dod, CAST(NULL AS INT64) AS dau_sdlw, CAST(NULL AS FLOAT64) AS dau_7davg,
+    CAST(NULL AS FLOAT64) AS dau_dod_pct, CAST(NULL AS FLOAT64) AS dau_sdlw_pct, CAST(NULL AS FLOAT64) AS dau_7davg_pct,
+    CAST(NULL AS FLOAT64) AS mins_per_dau, CAST(NULL AS FLOAT64) AS mins_per_dau_dod,
+    CAST(NULL AS INT64) AS dau_organic, CAST(NULL AS INT64) AS dau_push, CAST(NULL AS INT64) AS dau_moe, CAST(NULL AS INT64) AS dau_whatsapp,
+    CAST(NULL AS INT64) AS dau_new, CAST(NULL AS INT64) AS dau_retained, CAST(NULL AS INT64) AS dau_resurrected,
+    CAST(NULL AS INT64) AS dau_d0, CAST(NULL AS INT64) AS dau_d1_d3, CAST(NULL AS INT64) AS dau_d4_d7, CAST(NULL AS INT64) AS dau_d8_d14, CAST(NULL AS INT64) AS dau_d15_d30, CAST(NULL AS INT64) AS dau_d30_plus,
+    CAST(NULL AS STRING) AS src_drop_driver, CAST(NULL AS STRING) AS usertype_drop_driver, CAST(NULL AS STRING) AS cohort_drop_driver, CAST(NULL AS STRING) AS top_surface_drops, CAST(NULL AS STRING) AS peak_drop_hour,
+    CAST(NULL AS INT64) AS series_launched, CAST(NULL AS INT64) AS series_success, CAST(NULL AS INT64) AS series_fail, CAST(NULL AS INT64) AS series_tracking,
+    CAST(NULL AS FLOAT64) AS sr_pct, CAST(NULL AS FLOAT64) AS sr_sdlw, CAST(NULL AS FLOAT64) AS sr_7davg, CAST(NULL AS BOOL) AS sr_is_frozen,
+    CAST(NULL AS FLOAT64) AS avg_cr, CAST(NULL AS FLOAT64) AS avg_targ_cr, CAST(NULL AS FLOAT64) AS content_watch_hrs,
+    CAST(NULL AS INT64) AS supply,
+    l2.hdc_flag AS l0,
+    CAST(NULL AS INT64) AS l1, CAST(NULL AS INT64) AS l2, CAST(NULL AS INT64) AS l3, CAST(NULL AS INT64) AS l4, CAST(NULL AS INT64) AS l5, CAST(NULL AS INT64) AS l6,
+    CAST(NULL AS FLOAT64) AS l0_pct, CAST(NULL AS FLOAT64) AS l4l5_pct,
+    l2.hdc_flag AS hdc_count, CAST(NULL AS FLOAT64) AS hdc_rate, CAST(NULL AS FLOAT64) AS hdc_count_7davg, CAST(NULL AS FLOAT64) AS supply_7davg, CAST(NULL AS FLOAT64) AS l0_pct_7davg,
+    CAST(NULL AS INT64) AS hdc_dod, CAST(NULL AS INT64) AS hdc_sdlw, CAST(NULL AS INT64) AS supply_dod, CAST(NULL AS INT64) AS supply_sdlw,
+    TRUE AS label_is_settled,
+    CAST(NULL AS INT64) AS hdc_7d, CAST(NULL AS INT64) AS supply_7d_seg, CAST(NULL AS INT64) AS l4l5_7d,
+    CAST(NULL AS FLOAT64) AS hdc_contribution_pct_7d, CAST(NULL AS FLOAT64) AS l4l5_pct_7d,
+    CAST(NULL AS INT64) AS show_supply_7d, CAST(NULL AS INT64) AS show_freq, CAST(NULL AS FLOAT64) AS show_supply_vs_freq_pct, CAST(NULL AS STRING) AS show_active_status,
+    CAST(NULL AS FLOAT64) AS bu_l0_pct, CAST(NULL AS FLOAT64) AS bu_l4l5_pct,
+    CAST(NULL AS INT64) AS poor_l0_flag, CAST(NULL AS INT64) AS high_l45_flag, CAST(NULL AS INT64) AS needs_supply_fix_flag,
+    CAST(NULL AS STRING) AS show_recommendation,
+    CAST(NULL AS FLOAT64) AS corr_hdc_dau, CAST(NULL AS FLOAT64) AS corr_sr_dau, CAST(NULL AS FLOAT64) AS corr_hdc_sr,
+    CAST(NULL AS STRING) AS dau_verdict, CAST(NULL AS STRING) AS sr_verdict,
+    l2.label AS hdc_verdict,                 -- reuse hdc_verdict to carry the L0–L6 label
+    CAST(NULL AS STRING) AS hdc_attribution, CAST(NULL AS STRING) AS comovement_pattern, CAST(NULL AS STRING) AS auto_rca,
+    l2.series_title AS hdc_series_title,
+    CAST(l2.views_24h AS INT64) AS hdc_views_24h,
+    CAST(l2.p90 AS FLOAT64) AS hdc_p90,
+    CAST(l2.view_threshold_value AS FLOAT64) AS hdc_threshold_value,
+    CAST(l2.target_cr AS FLOAT64) AS hdc_target_cr,
+    CAST(l2.actual_cr AS FLOAT64) AS hdc_achieved_cr,
+    l2.view_thr AS hdc_view_pass,
+    l2.cr_thr   AS hdc_cr_pass,
+    f.first_l0_date AS hdc_first_l0_date
+  FROM labeled2 l2
+  JOIN lbl_series ls ON ls.series_id = l2.series_id
+  LEFT JOIN series_first_l0 f ON f.show_id = l2.show_id
+  WHERE l2.language = 'hi'
 )
 
 SELECT * FROM seg_unified
 WHERE report_date BETWEEN DATE_SUB(end_date, INTERVAL report_window_days DAY) AND DATE_ADD(end_date, INTERVAL 1 DAY)
 UNION ALL
 SELECT * FROM show_unified
+UNION ALL
+SELECT * FROM series_unified
 ORDER BY
   report_date DESC,
-  CASE level WHEN 'TOTAL' THEN 1 WHEN 'LANGUAGE' THEN 2 WHEN 'BU' THEN 3 WHEN 'SHOW' THEN 4 ELSE 5 END,
+  CASE level WHEN 'TOTAL' THEN 1 WHEN 'LANGUAGE' THEN 2 WHEN 'BU' THEN 3 WHEN 'SHOW' THEN 4 WHEN 'HDC_SERIES' THEN 5 ELSE 6 END,
   segment, show_name;
