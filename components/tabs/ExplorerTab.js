@@ -25,7 +25,11 @@ export default function ExplorerTab() {
   const setSortBy = useStore((s) => s.setSortBy);
   const setFilter = useStore((s) => s.setFilter);
   const openDeepDive = useStore((s) => s.openDeepDive);
+  const actionsConfigured = useStore((s) => s.actionsConfigured);
+  const userName = useStore((s) => s.userName);
+  const setShowManager = useStore((s) => s.setShowManager);
   const hdcRows = data.hdcRows;
+  const assign = { enabled: actionsConfigured && !!userName, me: userName };
 
   // Explorer has no agreement filter — clear any lingering value on entry.
   useEffect(() => {
@@ -64,11 +68,20 @@ export default function ExplorerTab() {
   filtered.forEach((s) => counts[(ACTION_META[s.rec.key] || { tone: 'grey' }).tone]++);
   const sorted = sortModel(filtered, sortBy);
   const scopeLabel = filters.language ? LANG_NAMES[filters.language] || filters.language : 'all languages';
-  const bodyHtml = sorted.map((s) => explorerRow(s, hdcRows)).join('');
+  const bodyHtml = sorted.map((s) => explorerRow(s, hdcRows, assign)).join('');
 
   const tipAttr = (key) => (METRIC_TIPS[key] ? { 'data-tip': METRIC_TIPS[key] } : {});
 
   function onBodyClick(e) {
+    // Self-assign control takes precedence over the row's deep-dive navigation.
+    const assignBtn = e.target.closest('[data-assign-show]');
+    if (assignBtn) {
+      e.stopPropagation();
+      const id = assignBtn.getAttribute('data-assign-show');
+      const action = assignBtn.getAttribute('data-assign-action');
+      setShowManager(id, action === 'assign' ? userName : '').catch(() => {});
+      return;
+    }
     const tr = e.target.closest('[data-show]');
     if (tr) openDeepDive(tr.getAttribute('data-show'));
   }

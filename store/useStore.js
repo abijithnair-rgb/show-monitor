@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { idbSet, idbGet, idbDel } from '@/lib/idb';
 import { sampleData } from '@/lib/sample';
 import { fetchSheets, fetchRemote, remoteStatus } from '@/lib/remote';
-import { fetchActions, claimAction, updateClaim, archiveAction, releaseAction } from '@/lib/actions';
+import { fetchActions, claimAction, updateClaim, archiveAction, releaseAction, setManagerAction } from '@/lib/actions';
 
 // Global app state (replaces the original mutable `state` object).
 export const useStore = create((set, get) => ({
@@ -16,8 +16,9 @@ export const useStore = create((set, get) => ({
   lastSyncAt: null, syncing: false, syncError: null,
 
   // Shared action-ownership board (Vercel KV). actions = { experimentId: claim }
-  // (a show can hold several), history = { show_id: [concluded experiments] }.
-  actions: {}, history: {}, actionsConfigured: false, userName: '',
+  // (a show can hold several), history = { show_id: [concluded experiments] },
+  // managers = { show_id: name } self-assigned manager overrides.
+  actions: {}, history: {}, managers: {}, actionsConfigured: false, userName: '',
 
   tab: 'data',
   // metricBand/metricOp/metricX: Explorer-only label/SR threshold filter
@@ -39,6 +40,7 @@ export const useStore = create((set, get) => ({
     return {
       evalRows: s.evalRows, fatRows: s.fatRows, hdcRows: s.hdcRows, snapRows: s.snapRows, tsRows: s.tsRows, metaRows: s.metaRows, rcaRows: s.rcaRows, audRows: s.audRows, retRows: s.retRows,
       evalMeta: s.evalMeta, fatMeta: s.fatMeta, hdcMeta: s.hdcMeta, snapMeta: s.snapMeta, tsMeta: s.tsMeta, metaMeta: s.metaMeta, rcaMeta: s.rcaMeta, audMeta: s.audMeta, retMeta: s.retMeta,
+      managerOverrides: s.managers,
     };
   },
 
@@ -137,11 +139,21 @@ export const useStore = create((set, get) => ({
   // ---- Shared action-ownership board (Vercel KV) ----
   loadActions: async () => {
     try {
-      const { configured, actions, history } = await fetchActions();
-      set({ actionsConfigured: !!configured, actions: actions || {}, history: history || {} });
+      const { configured, actions, history, managers } = await fetchActions();
+      set({ actionsConfigured: !!configured, actions: actions || {}, history: history || {}, managers: managers || {} });
     } catch {
       set({ actionsConfigured: false });
     }
+  },
+  // Self-assign / clear a show's manager override; patch the local map.
+  setShowManager: async (showId, manager) => {
+    const res = await setManagerAction(showId, manager);
+    set((st) => {
+      const next = { ...st.managers };
+      if (res.manager) next[String(showId)] = res.manager; else delete next[String(showId)];
+      return { managers: next };
+    });
+    return res.manager;
   },
   // Patch a single claim into the map by experiment id (null = removed).
   applyClaim: (id, claim) => set((st) => {

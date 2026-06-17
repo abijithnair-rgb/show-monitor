@@ -218,7 +218,7 @@ export default function ActionQueueTab() {
   const bus = [...new Set(rows.map((r) => r.s.bu).filter(Boolean))].sort();
   const cats = [...new Set(rows.map((r) => r.s.category).filter(Boolean))].sort();
   const reasonsList = [...new Set(rows.flatMap((r) => r.reasonTags))].sort();
-  const managers = [...new Set(rows.map((r) => r.s.meta?.show_manager).filter(Boolean))].sort();
+  const managers = [...new Set(rows.map((r) => r.s.manager).filter(Boolean))].sort();
 
   const decisionCount = (d) => rows.filter((r) => r.decision === d).length;
 
@@ -235,7 +235,7 @@ export default function ActionQueueTab() {
     if (bu && r.s.bu !== bu) return false;
     if (category && r.s.category !== category) return false;
     if (recommendation && r.decision !== recommendation) return false;
-    if (manager && (r.s.meta?.show_manager || '') !== manager) return false;
+    if (manager && (r.s.manager || '') !== manager) return false;
     if (reason && !r.reasonTags.includes(reason)) return false;
     if (fixArea && String(r.s.fat?.mode || '').toUpperCase() !== fixArea) return false;
     if (confidence && String(r.confidence || '').toLowerCase() !== confidence) return false;
@@ -407,7 +407,7 @@ export default function ActionQueueTab() {
                       {r.s.category && <span className="chip chip-purple">{r.s.category}</span>}
                     </div>
                   </td>
-                  <td className="text-sm text-slate-700">{r.s.meta?.show_manager || <span className="hint">—</span>}</td>
+                  <td className="text-sm text-slate-700">{r.s.manager || <span className="hint">—</span>}</td>
                   <td>
                     <div>{fmtDate(r.launch)}</div>
                     <div className="hint">{weeksAgo(r.launch)}</div>

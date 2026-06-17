@@ -16,7 +16,7 @@ export default function FilterBar({ model, hideAgreement }) {
   const cats = uniq(model.map((s) => s.category));
   const bus = uniq(model.map((s) => s.bu));
   const stats = uniq(model.map((s) => s.status));
-  const managers = uniq(model.map((s) => s.meta?.show_manager));
+  const managers = uniq(model.map((s) => s.manager));
   const acts = [...new Set(model.map((s) => s.rec.key))];
 
   const Dd = ({ label, k, options, fmt }) => (
@@ -67,7 +67,7 @@ export function applyFilters(model, filters, search) {
   if (filters.bu) m = m.filter((s) => s.bu === filters.bu);
   if (filters.category) m = m.filter((s) => s.category === filters.category);
   if (filters.status) m = m.filter((s) => s.status === filters.status);
-  if (filters.manager) m = m.filter((s) => (s.meta?.show_manager || '') === filters.manager);
+  if (filters.manager) m = m.filter((s) => (s.manager || '') === filters.manager);
   if (filters.action) m = m.filter((s) => s.rec.key === filters.action);
   if (filters.agreement) m = m.filter((s) => s.rec.agreement === filters.agreement);
   if (search) {

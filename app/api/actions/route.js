@@ -24,6 +24,7 @@ export const dynamic = 'force-dynamic';
 
 const KEY = 'sm:actions';      // active experiments: field = experiment id
 const HKEY = 'sm:history';     // concluded experiments: field = show_id → JSON array
+const MKEY = 'sm:managers';    // show-manager overrides: field = show_id → name string
 
 // Unique experiment id: show-scoped + timestamp + a little randomness.
 function newExperimentId(showId) {
@@ -82,13 +83,27 @@ function foldHash(flat) {
   return out;
 }
 
+// Fold a flat [field, value, …] hash whose values are plain strings (sm:managers).
+function foldStrings(flat) {
+  const out = {};
+  if (Array.isArray(flat)) {
+    for (let i = 0; i < flat.length; i += 2) {
+      const v = flat[i + 1];
+      if (v != null && v !== '') out[flat[i]] = String(v);
+    }
+  }
+  return out;
+}
+
 export async function GET() {
-  if (!configured()) return Response.json({ configured: false, actions: {}, history: {} });
+  if (!configured()) return Response.json({ configured: false, actions: {}, history: {}, managers: {} });
   try {
-    const [flat, hflat] = await Promise.all([kv(['HGETALL', KEY]), kv(['HGETALL', HKEY])]);
-    return Response.json({ configured: true, actions: foldHash(flat), history: foldHash(hflat) });
+    const [flat, hflat, mflat] = await Promise.all([
+      kv(['HGETALL', KEY]), kv(['HGETALL', HKEY]), kv(['HGETALL', MKEY]),
+    ]);
+    return Response.json({ configured: true, actions: foldHash(flat), history: foldHash(hflat), managers: foldStrings(mflat) });
   } catch (err) {
-    return Response.json({ configured: true, actions: {}, history: {}, error: err?.message || 'KV read failed.' }, { status: 502 });
+    return Response.json({ configured: true, actions: {}, history: {}, managers: {}, error: err?.message || 'KV read failed.' }, { status: 502 });
   }
 }
 
@@ -115,6 +130,15 @@ export async function POST(req) {
   const getPrev = async () => { try { const raw = await kv(['HGET', KEY, expId]); return raw ? JSON.parse(raw) : null; } catch { return null; } };
 
   try {
+    // 'set_manager' overrides a show's manager (self-assign from Explorer).
+    // Non-empty name → HSET; empty/null → clear the override (HDEL).
+    if (op === 'set_manager') {
+      if (!showId) return Response.json({ error: 'show_id is required.' }, { status: 400 });
+      const name = body?.manager != null ? String(body.manager).trim() : '';
+      if (name) await kv(['HSET', MKEY, showId, name]);
+      else await kv(['HDEL', MKEY, showId]);
+      return Response.json({ ok: true, show_id: showId, manager: name || null });
+    }
     if (op === 'release') {
       if (!expId) return Response.json({ error: 'id is required.' }, { status: 400 });
       await kv(['HDEL', KEY, expId]);

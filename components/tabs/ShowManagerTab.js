@@ -33,21 +33,22 @@ export default function ShowManagerTab() {
   // Shows each POC manages, from show_detail.show_manager (carried in metaRows),
   // counting ONLY active/experimental shows. Match a manager name to a POC by
   // first name (handles "Abijith" / "Abijith Nair" / "abijith@…").
+  // Driven by the model's EFFECTIVE manager (s.manager = self-assign override,
+  // else the query's show_manager), so Explorer assignments count here too.
   const managedByPoc = useMemo(() => {
     const m = new Map();
     POCS.forEach((p) => m.set(p, new Set()));
     const firstTok = (v) => String(v || '').trim().toLowerCase().split(/[\s._@]+/)[0];
-    for (const r of data.metaRows || []) {
-      const mgr = r.show_manager;
+    for (const s of model) {
+      const mgr = s.manager;
       if (!mgr) continue;
-      const status = normStatus(r.state) || normStatus(r.show_type);
-      if (status !== 'active' && status !== 'experiment') continue;
+      if (s.status !== 'active' && s.status !== 'experiment') continue;
       const tok = firstTok(mgr);
       const poc = POCS.find((p) => p.toLowerCase() === tok || p.toLowerCase() === String(mgr).trim().toLowerCase());
-      if (poc) m.get(poc).add(String(r.show_id));
+      if (poc) m.get(poc).add(String(s.id));
     }
     return m;
-  }, [data.metaRows]);
+  }, [model]);
   const managedCount = (p) => managedByPoc.get(p)?.size ?? 0;
   const metaById = useMemo(() => {
     const m = new Map();
