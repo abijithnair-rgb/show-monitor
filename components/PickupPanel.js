@@ -6,7 +6,7 @@ import {
   METRIC_OPTIONS, metricLabel, reviewDue, todayStr,
   evalVerdict, VERDICT_META, progressLine, sincePickupParts,
   srTargetOptions, LABEL_BANDS, LABEL_MAX, EXPERIMENT_MAX_DAYS, labelDefaultOp, makeLabelTarget, impliedTarget,
-  targetText, POCS,
+  targetText, trackedValueText, POCS,
 } from '@/lib/ownership';
 
 // Hoisted (stable identity so inputs don't remount on keystroke).
@@ -47,14 +47,18 @@ function DateField({ label, value, set, readOnly, max }) {
 }
 
 // Reusable ownership / experiment panel.
+//   claimId        → which experiment this panel manages (null = new-experiment
+//                    form). A show can have several active experiments.
+//   defaultMetric  → metric to pre-select on the new-experiment form (matches the
+//                    Action Queue reason).
 //   readOnly=true  → summary only (Deep Dive): metric, target, verdict, progress.
 //   readOnly=false → interactive: pick-up (or assign) form, then status with
 //                    edit dates / override verdict / archive / release.
 //   assign=true    → the form assigns to another person (owner = assignee,
 //                    recorded with assigned_by = current user). Only offered to
 //                    users who canAssign().
-export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false, assign = false }) {
-  const claim = useStore((st) => st.actions[String(s.id)]);
+export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false, assign = false, claimId = null, defaultMetric = '' }) {
+  const claim = useStore((st) => (claimId ? st.actions[String(claimId)] : null));
   const userName = useStore((st) => st.userName);
   const setUserName = useStore((st) => st.setUserName);
   const claimShow = useStore((st) => st.claimShow);
@@ -62,16 +66,20 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
   const archiveShow = useStore((st) => st.archiveShow);
   const releaseShow = useStore((st) => st.releaseShow);
 
+  const initialMetric = defaultMetric || 'success_rate';
+  const initialBand = defaultMetric === 'label' ? 'L5' : 'L0';
   const [nameDraft, setNameDraft] = useState('');
   const [assignee, setAssignee] = useState('');
-  const [metric, setMetric] = useState('success_rate');
+  const [metric, setMetric] = useState(initialMetric);
   const [srTargetId, setSrTargetId] = useState('');
-  const [labelBand, setLabelBand] = useState('L0');
-  const [labelOp, setLabelOp] = useState('gte');
+  const [labelBand, setLabelBand] = useState(initialBand);
+  const [labelOp, setLabelOp] = useState(labelDefaultOp(initialBand));
   const [labelN, setLabelN] = useState(1);
   const [remark, setRemark] = useState('');
   const [actionDate, setActionDate] = useState(claim?.action_date || '');
   const [reviewDate, setReviewDate] = useState(claim?.review_date || '');
+  const [concluding, setConcluding] = useState(false);
+  const [concludeNote, setConcludeNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
@@ -125,9 +133,9 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
       onClose?.();
     });
   }
-  const saveDates = () => run(() => updateClaimFields(s.id, { action_date: actionDate || null, review_date: reviewDate || null }));
-  const override = (v) => run(() => updateClaimFields(s.id, { verdict_override: v }));
-  const archive = () => run(() => archiveShow(s.id, verdict, snapshotNow));
+  const saveDates = () => run(() => updateClaimFields(claim.id, { action_date: actionDate || null, review_date: reviewDate || null }));
+  const override = (v) => run(() => updateClaimFields(claim.id, { verdict_override: v }));
+  const archive = () => run(async () => { await archiveShow(claim.id, verdict, snapshotNow, concludeNote.trim() || null); onClose?.(); });
   const datesChanged = (claim?.action_date || '') !== actionDate || (claim?.review_date || '') !== reviewDate;
 
   // ---- Summary block (shared by read-only + claimed views) ----
@@ -289,14 +297,31 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
             )}
           </div>
           {(() => { const p = sincePickupParts(claim.snapshot, snapshotNow); return p.length ? <Numbers title="Since pickup" snap={snapshotNow} /> : null; })()}
-          {isOwner && (
+          {isOwner && !concluding && (
             <div className="flex gap-3 items-center flex-wrap text-xs">
               {verdict !== 'reached' && <button className="text-emerald-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => override('reached')}>Mark reached</button>}
               {verdict !== 'failed' && <button className="text-red-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => override('failed')}>Mark failed</button>}
               {claim.verdict_override && <button className="text-slate-500 hover:underline disabled:opacity-50" disabled={busy} onClick={() => override(null)}>Clear override</button>}
               <span className="text-slate-300">·</span>
-              <button className="text-slate-700 font-medium hover:underline disabled:opacity-50" disabled={busy} onClick={archive}>Conclude → save to history</button>
-              <button className="text-slate-400 hover:text-slate-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => run(() => releaseShow(s.id))}>Discard</button>
+              <button className="text-slate-700 font-medium hover:underline disabled:opacity-50" disabled={busy} onClick={() => setConcluding(true)}>Conclude → save to history</button>
+              <button className="text-slate-400 hover:text-slate-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => run(() => releaseShow(claim.id))}>Discard</button>
+            </div>
+          )}
+          {isOwner && concluding && (
+            <div className="rounded-md border border-slate-200 bg-white p-2 flex flex-col gap-2">
+              <div className="text-xs text-slate-600">
+                Concluding as <span className={'chip ' + (vMeta?.chip || 'chip-grey')}>{vMeta?.label || verdict}</span> — result: <b>{trackedValueText(claim.target, snapshotNow)}</b> (target: {targetText(claim.target)}).
+              </div>
+              <label className="text-xs text-slate-500 flex flex-col gap-1">
+                Conclude remark
+                <textarea value={concludeNote} onChange={(e) => setConcludeNote(e.target.value)} rows={2}
+                  placeholder="Outcome / key learning to keep in history (optional)"
+                  className="border border-slate-300 rounded-md px-2 py-1 text-sm resize-none" />
+              </label>
+              <div className="flex gap-2">
+                <button className="btn btn-primary text-xs" disabled={busy} onClick={archive}>{busy ? 'Saving…' : 'Save to history'}</button>
+                <button className="btn btn-ghost text-xs" disabled={busy} onClick={() => { setConcluding(false); setConcludeNote(''); }}>Cancel</button>
+              </div>
             </div>
           )}
           {!isOwner && <div className="hint">Only {claim.by} (the owner) can update this experiment.</div>}

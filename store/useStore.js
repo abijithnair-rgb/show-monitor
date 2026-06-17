@@ -15,8 +15,8 @@ export const useStore = create((set, get) => ({
   remoteConfigured: { combined: false, rca: false },
   lastSyncAt: null, syncing: false, syncError: null,
 
-  // Shared action-ownership board (Vercel KV). actions = { show_id: claim },
-  // history = { show_id: [concluded experiments] }.
+  // Shared action-ownership board (Vercel KV). actions = { experimentId: claim }
+  // (a show can hold several), history = { show_id: [concluded experiments] }.
   actions: {}, history: {}, actionsConfigured: false, userName: '',
 
   tab: 'data',
@@ -25,6 +25,10 @@ export const useStore = create((set, get) => ({
   sortBy: 'users',
   deepDiveId: null,
   deepLang: '',
+
+  // Action Queue filters — in-memory only (survive tab switches, reset on a full
+  // page refresh). Deliberately NOT persisted to IndexedDB.
+  aqFilters: { search: '', sortBy: 'overdue', language: '', status: '', bu: '', category: '', recommendation: '', reason: '', confidence: '', fixArea: '' },
 
   // ---- derived ----
   hasData: () => !!(get().evalRows || get().fatRows),
@@ -45,6 +49,13 @@ export const useStore = create((set, get) => ({
   setDeepDiveId: (deepDiveId) => set({ deepDiveId }),
   setDeepLang: (deepLang) => set({ deepLang }),
   openDeepDive: (id) => set({ deepDiveId: id, tab: 'deep' }),
+  setAqFilter: (key, value) => set((st) => ({ aqFilters: { ...st.aqFilters, [key]: value } })),
+  resetAqFilters: () => set({ aqFilters: { search: '', sortBy: 'overdue', language: '', status: '', bu: '', category: '', recommendation: '', reason: '', confidence: '', fixArea: '' } }),
+
+  // All active experiments for a show (sorted oldest-first; [0] = "primary").
+  claimsForShow: (showId) => Object.values(get().actions || {})
+    .filter((c) => String(c.show_id) === String(showId))
+    .sort((a, b) => String(a.claimed_at || '').localeCompare(String(b.claimed_at || ''))),
 
   // ---- persistence ----
   persist: async () => {
@@ -130,10 +141,10 @@ export const useStore = create((set, get) => ({
       set({ actionsConfigured: false });
     }
   },
-  // Patch a single claim into the map (null = removed); used after a write.
-  applyClaim: (showId, claim) => set((st) => {
+  // Patch a single claim into the map by experiment id (null = removed).
+  applyClaim: (id, claim) => set((st) => {
     const next = { ...st.actions };
-    if (claim) next[String(showId)] = claim; else delete next[String(showId)];
+    if (claim) next[String(claim.id ?? id)] = claim; else delete next[String(id)];
     return { actions: next };
   }),
   setUserName: async (name) => {
@@ -142,29 +153,32 @@ export const useStore = create((set, get) => ({
   },
   // Thin ownership writes — call the API, patch the local map, throw on error so
   // the UI can manage busy/error state. Each returns the updated claim.
+  // claimShow creates a NEW experiment for a show (server assigns the id).
   claimShow: async (showId, by, snapshot, extra) => {
-    const { claim } = await claimAction(showId, by, snapshot, extra);
-    get().applyClaim(showId, claim);
+    const { id, claim } = await claimAction(showId, by, snapshot, extra);
+    get().applyClaim(id, claim);
     return claim;
   },
-  updateClaimFields: async (showId, fields) => {
-    const { claim } = await updateClaim(showId, fields);
-    get().applyClaim(showId, claim);
-    return claim;
+  // update / archive / release target a single experiment by its id.
+  updateClaimFields: async (id, fields) => {
+    const res = await updateClaim(id, fields);
+    get().applyClaim(res.id ?? id, res.claim);
+    return res.claim;
   },
-  // Conclude the experiment → append to per-show history, clear the active claim.
-  archiveShow: async (showId, verdict, finalSnapshot) => {
-    const { archived } = await archiveAction(showId, verdict, finalSnapshot);
+  // Conclude the experiment → append to its show's history, clear the active claim.
+  archiveShow: async (id, verdict, finalSnapshot, concludeNote) => {
+    const { archived } = await archiveAction(id, verdict, finalSnapshot, concludeNote);
     set((st) => {
-      const actions = { ...st.actions }; delete actions[String(showId)];
+      const actions = { ...st.actions }; delete actions[String(id)];
       const history = { ...st.history };
-      history[String(showId)] = [archived, ...(history[String(showId)] || [])];
+      const sid = String(archived?.show_id ?? id);
+      history[sid] = [archived, ...(history[sid] || [])];
       return { actions, history };
     });
   },
-  releaseShow: async (showId) => {
-    await releaseAction(showId);
-    get().applyClaim(showId, null);
+  releaseShow: async (id) => {
+    await releaseAction(id);
+    get().applyClaim(id, null);
   },
 
   // ---- Google-Sheet auto-sync ----

@@ -3,7 +3,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildModel, buildFatIndex } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
-import { metricSnapshot, currentFor, reviewDue, evalVerdict, VERDICT_META, metricLabel, canAssign, POCS } from '@/lib/ownership';
+import { metricSnapshot, currentFor, reviewDue, evalVerdict, VERDICT_META, metricLabel, canAssign, POCS, defaultMetricForReasons } from '@/lib/ownership';
 import { successRate } from '@/lib/metrics';
 import PickupPanel from '@/components/PickupPanel';
 import { fmtDate, weeksAgo, timeAgo, fmtPct, fmtNum, num, LANG_NAMES } from '@/lib/format';
@@ -121,16 +121,24 @@ export default function ActionQueueTab() {
   // which show's panel is open, and in which mode: { id, assign }
   const [expanded, setExpanded] = useState({ id: null, assign: false });
 
-  const [search, setSearch] = useState('');
-  const [sortBy, setSortBy] = useState('overdue');
-  const [language, setLanguage] = useState('');
-  const [status, setStatus] = useState('');
-  const [bu, setBu] = useState('');
-  const [category, setCategory] = useState('');
-  const [recommendation, setRecommendation] = useState('');
-  const [reason, setReason] = useState('');
-  const [confidence, setConfidence] = useState('');
-  const [fixArea, setFixArea] = useState('');
+  // Filters live in the store (in-memory): they survive tab switches and only
+  // reset on a full page refresh or via "Reset filters".
+  const aqFilters = useStore((s) => s.aqFilters);
+  const setAqFilter = useStore((s) => s.setAqFilter);
+  const resetAqFilters = useStore((s) => s.resetAqFilters);
+  const { search, sortBy, language, status, bu, category, recommendation, reason, confidence, fixArea } = aqFilters;
+  // Setter factory that also accepts the functional-updater form some pills use.
+  const mkSet = (key) => (v) => setAqFilter(key, typeof v === 'function' ? v(aqFilters[key]) : v);
+  const setSearch = mkSet('search');
+  const setSortBy = mkSet('sortBy');
+  const setLanguage = mkSet('language');
+  const setStatus = mkSet('status');
+  const setBu = mkSet('bu');
+  const setCategory = mkSet('category');
+  const setRecommendation = mkSet('recommendation');
+  const setReason = mkSet('reason');
+  const setConfidence = mkSet('confidence');
+  const setFixArea = mkSet('fixArea');
 
   const iCanAssign = canAssign(userName);
 
@@ -235,16 +243,25 @@ export default function ActionQueueTab() {
     return true;
   });
 
+  // Active experiments grouped by show (a show may have several). [0] = primary
+  // (oldest); the Action Queue manages the primary, extras live in Deep Dive.
+  const claimsByShow = useMemo(() => {
+    const m = {};
+    for (const c of Object.values(actions || {})) {
+      const k = String(c.show_id);
+      (m[k] || (m[k] = [])).push(c);
+    }
+    for (const k of Object.keys(m)) m[k].sort((a, b) => String(a.claimed_at || '').localeCompare(String(b.claimed_at || '')));
+    return m;
+  }, [actions]);
+
   const launchT = (r) => (r.launch ? new Date(r.launch).getTime() || Infinity : Infinity);
-  // A picked-up experiment "needs attention" when its review date has arrived OR
-  // the target has been auto-judged reached/failed — those float to the very top,
-  // regardless of the chosen sort.
+  // A show "needs attention" when ANY of its experiments is review-due OR has been
+  // auto-judged reached/failed — those float to the very top, regardless of sort.
   const attnOf = (r) => {
-    const claim = actions[String(r.s.id)];
-    if (!claim) return false;
-    if (reviewDue(claim)) return true;
-    const v = evalVerdict(claim, currentFor(claim, r.s, data, hdcIdx, fatIdx));
-    return v !== 'tracking';
+    const cs = claimsByShow[String(r.s.id)];
+    if (!cs || !cs.length) return false;
+    return cs.some((claim) => reviewDue(claim) || evalVerdict(claim, currentFor(claim, r.s, data, hdcIdx, fatIdx)) !== 'tracking');
   };
   filtered = [...filtered].sort((a, b) => {
     const da = attnOf(a), db = attnOf(b);
@@ -255,9 +272,7 @@ export default function ActionQueueTab() {
   });
   const dueCount = filtered.filter(attnOf).length;
 
-  function clearFilters() {
-    setSearch(''); setLanguage(''); setStatus(''); setBu(''); setCategory(''); setRecommendation(''); setReason(''); setConfidence(''); setFixArea('');
-  }
+  const clearFilters = () => resetAqFilters();
 
   return (
     <div>
@@ -334,7 +349,7 @@ export default function ActionQueueTab() {
               {SORTS.map((o) => (<option key={o.id} value={o.id}>{o.label}</option>))}
             </select>
           </label>
-          <button className="btn btn-ghost" onClick={clearFilters}>Clear filters</button>
+          <button className="btn btn-ghost" onClick={clearFilters}>Reset filters</button>
         </div>
 
         <div className="flex flex-wrap gap-3 items-end">
@@ -366,7 +381,9 @@ export default function ActionQueueTab() {
           <tbody>
             {filtered.length ? (
               filtered.map((r) => {
-                const claim = actions[String(r.s.id)];
+                const showClaims = claimsByShow[String(r.s.id)] || [];
+                const claim = showClaims[0] || null; // primary (oldest) experiment
+                const moreCount = Math.max(0, showClaims.length - 1);
                 const snapNow = claim ? currentFor(claim, r.s, data, hdcIdx, fatIdx) : metricSnapshot(r.s, hdcIdx, fatIdx, data.fatRows);
                 const verdict = claim ? evalVerdict(claim, snapNow) : null;
                 const vMeta = verdict ? VERDICT_META[verdict] : null;
@@ -414,6 +431,7 @@ export default function ActionQueueTab() {
                           <div className="hint mt-0.5">
                             picked up {timeAgo(claim.claimed_at)}
                             {claim.review_date ? ` · review ${fmtDate(claim.review_date)}` : ''}
+                            {moreCount > 0 ? ` · ＋${moreCount} more · manage in Deep Dive` : ''}
                             {' '}{isExpanded ? '▾' : '▸'}
                           </div>
                         </button>
@@ -432,7 +450,7 @@ export default function ActionQueueTab() {
                 {actionsConfigured && isExpanded && (
                   <tr>
                     <td colSpan={colCount} className="p-2 bg-white">
-                      <PickupPanel s={r.s} snapshotNow={snapNow} assign={expanded.assign} onClose={() => setExpanded({ id: null, assign: false })} />
+                      <PickupPanel s={r.s} snapshotNow={snapNow} assign={expanded.assign} claimId={claim?.id || null} defaultMetric={defaultMetricForReasons(r.reasonTags)} onClose={() => setExpanded({ id: null, assign: false })} />
                     </td>
                   </tr>
                 )}

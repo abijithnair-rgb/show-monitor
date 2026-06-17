@@ -8,7 +8,7 @@ import { esc, fmtDate, LANG_NAMES, num } from '@/lib/format';
 import { actionChip, agreeBadge, kpiGrid, hdcCard, contribBar, last10Table } from '@/lib/render';
 import { TrajectoryChart, RetentionChart, FailureDoughnut, AudienceSourceChart, RetentionTrendChart } from '@/components/deepdive/charts';
 import PickupPanel from '@/components/PickupPanel';
-import { snapshotFromData, currentFor, metricLabel, VERDICT_META, canAssign } from '@/lib/ownership';
+import { snapshotFromData, currentFor, metricLabel, VERDICT_META, canAssign, targetText, trackedValueText } from '@/lib/ownership';
 
 // Searchable show picker — a text box that filters a dropdown list by title,
 // category or show_id. Click a result (or the only match) to select.
@@ -123,12 +123,20 @@ function DeepBody({ s, data }) {
   const recTone = { red: 'banner-red', amber: 'banner-amber', green: 'banner-yellow', grey: 'banner-yellow' }[(ACTION_META[s.rec.key] || {}).tone] || 'banner-yellow';
 
   // Experiment launcher state (top-right "Run experiment" / "Assign"). Shared
-  // between the header button and the form rendered below the banner.
+  // between the header button and the form rendered below the banner. A show can
+  // run several experiments at once, so Deep Dive lists them all and always lets
+  // you start another (the Action Queue only starts the first one).
   const actionsConfigured = useStore((st) => st.actionsConfigured);
-  const claim = useStore((st) => st.actions[String(s.id)]);
+  const actions = useStore((st) => st.actions);
+  const showClaims = useMemo(
+    () => Object.values(actions || {})
+      .filter((c) => String(c.show_id) === String(s.id))
+      .sort((a, b) => String(a.claimed_at || '').localeCompare(String(b.claimed_at || ''))),
+    [actions, s.id]
+  );
   const userName = useStore((st) => st.userName);
   const [expOpen, setExpOpen] = useState(null); // null | 'pickup' | 'assign'
-  const canLaunch = actionsConfigured && !claim;
+  const canLaunch = actionsConfigured;
 
   const headHtml = `<span class="text-2xl font-bold">${esc(s.title)}</span>
     <span class="chip chip-blue">${esc(LANG_NAMES[s.language] || s.language)}</span>
@@ -147,18 +155,22 @@ function DeepBody({ s, data }) {
         <div className="flex items-center gap-2 flex-wrap" dangerouslySetInnerHTML={{ __html: headHtml }} />
         {canLaunch && !expOpen && (
           <div className="flex gap-2 shrink-0">
-            <button className="btn btn-primary text-sm" onClick={() => setExpOpen('pickup')}>Run experiment</button>
+            <button className="btn btn-primary text-sm" onClick={() => setExpOpen('pickup')}>{showClaims.length ? 'Run another experiment' : 'Run experiment'}</button>
             {canAssign(userName) && <button className="btn btn-ghost text-sm" onClick={() => setExpOpen('assign')}>Assign</button>}
           </div>
         )}
       </div>
       <div className={`banner ${recTone} mb-4`} style={{ display: 'block' }} dangerouslySetInnerHTML={{ __html: bannerHtml }} />
 
-      {/* Active experiment summary (read-only) or the launched form. */}
-      {actionsConfigured && claim && (
+      {/* Active experiments — one interactive panel each (owner can edit/conclude). */}
+      {actionsConfigured && showClaims.length > 0 && (
         <div className="mb-4">
-          <div className="font-semibold mb-2 text-sm">Active experiment</div>
-          <PickupPanel s={s} snapshotNow={currentFor(claim, s, data)} readOnly />
+          <div className="font-semibold mb-2 text-sm">Active experiment{showClaims.length > 1 ? `s (${showClaims.length})` : ''}</div>
+          <div className="flex flex-col gap-3">
+            {showClaims.map((c) => (
+              <PickupPanel key={c.id} s={s} claimId={c.id} snapshotNow={currentFor(c, s, data)} />
+            ))}
+          </div>
         </div>
       )}
       {canLaunch && expOpen && (
@@ -224,7 +236,9 @@ function DeepBody({ s, data }) {
   );
 }
 
-// Concluded experiments — shown at the BOTTOM of the deep dive (history, not top).
+// Concluded experiments — shown at the BOTTOM of the deep dive (history, not
+// top). Each row spells out the status at pickup, the result at conclusion, the
+// target, and both remarks (pickup + conclude) so context isn't lost.
 function ExperimentHistory({ s }) {
   const configured = useStore((st) => st.actionsConfigured);
   const history = useStore((st) => st.history[String(s.id)]) || [];
@@ -232,21 +246,40 @@ function ExperimentHistory({ s }) {
   return (
     <div className="card p-4 mb-4">
       <div className="font-semibold mb-2">Experiment history ({history.length})</div>
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3">
         {history.map((h, i) => {
           const vm = VERDICT_META[h.verdict] || VERDICT_META.failed;
           return (
-            <div key={i} className="flex items-center gap-2 flex-wrap text-xs border-b border-slate-100 pb-2 last:border-0 last:pb-0">
-              <span className={'chip ' + vm.chip}>{vm.label}</span>
-              <span className="chip chip-purple">{metricLabel(h.metric)}</span>
-              <span className="text-slate-600 font-medium">{h.by}</span>
-              <span className="hint">
-                {fmtDate(h.claimed_at)}{h.review_date ? ` → review ${fmtDate(h.review_date)}` : ''}{h.concluded_at ? ` · concluded ${fmtDate(h.concluded_at)}` : ''}
-              </span>
+            <div key={h.id || i} className="border-b border-slate-100 pb-3 last:border-0 last:pb-0">
+              <div className="flex items-center gap-2 flex-wrap text-xs mb-1.5">
+                <span className={'chip ' + vm.chip}>{vm.label}</span>
+                <span className="chip chip-purple">{metricLabel(h.metric)}</span>
+                <span className="text-slate-600 font-medium">{h.by}</span>
+                {h.assigned_by && <span className="hint">assigned by {h.assigned_by}</span>}
+                <span className="hint">
+                  {fmtDate(h.claimed_at)}{h.review_date ? ` → review ${fmtDate(h.review_date)}` : ''}{h.concluded_at ? ` · concluded ${fmtDate(h.concluded_at)}` : ''}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                <HistCell k="Target" v={targetText(h.target)} />
+                <HistCell k="At pickup" v={trackedValueText(h.target, h.snapshot)} />
+                <HistCell k="Result" v={h.final_snapshot ? trackedValueText(h.target, h.final_snapshot) : '—'} />
+              </div>
+              {h.note && <div className="text-xs text-slate-500 mt-1.5">Pickup remark: {h.note}</div>}
+              {h.conclude_note && <div className="text-xs text-slate-600 mt-1">Conclude remark: {h.conclude_note}</div>}
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function HistCell({ k, v }) {
+  return (
+    <div className="rounded-md border border-slate-200 px-2 py-1.5">
+      <div className="text-[11px] text-slate-500">{k}</div>
+      <div className="text-sm font-semibold text-slate-700">{v || '—'}</div>
     </div>
   );
 }

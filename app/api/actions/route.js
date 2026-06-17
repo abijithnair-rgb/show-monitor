@@ -14,14 +14,21 @@
 // When unset the route reports { configured:false } and the UI hides the
 // pick-up controls — the rest of the tool is unaffected.
 //
-// Storage shape: a single Redis HASH `sm:actions`, field = show_id, value =
-// claim JSON. Per-field writes mean two people claiming different shows never
-// clobber each other; one HGETALL reads the whole board.
+// Storage shape: a single Redis HASH `sm:actions`, field = experiment id, value
+// = claim JSON (each claim carries its show_id). A unique id per experiment lets
+// one show hold several active experiments at once; per-field writes mean two
+// people never clobber each other; one HGETALL reads the whole board.
+// (Legacy records were keyed by show_id with no `id` — handled on read.)
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const KEY = 'sm:actions';      // active experiments: field = show_id
+const KEY = 'sm:actions';      // active experiments: field = experiment id
 const HKEY = 'sm:history';     // concluded experiments: field = show_id → JSON array
+
+// Unique experiment id: show-scoped + timestamp + a little randomness.
+function newExperimentId(showId) {
+  return `${showId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+}
 
 // Find an env value by trying exact names first, then any key ending in a suffix.
 function envBySuffix(exact, suffixes) {
@@ -57,13 +64,19 @@ async function kv(args) {
 }
 
 // HGETALL returns a flat [field, value, field, value, ...] array; fold it into
-// { show_id: claim } with each value JSON-parsed.
+// { id: claim } with each value JSON-parsed. Back-compat: legacy records were
+// keyed by show_id with no `id` — backfill claim.id from the field so the rest
+// of the app (which keys by experiment id) treats them uniformly.
 function foldHash(flat) {
   const out = {};
   if (Array.isArray(flat)) {
     for (let i = 0; i < flat.length; i += 2) {
-      const k = flat[i];
-      try { out[k] = JSON.parse(flat[i + 1]); } catch { /* skip bad value */ }
+      const field = flat[i];
+      try {
+        const claim = JSON.parse(flat[i + 1]);
+        if (claim && claim.id == null) claim.id = field;
+        out[claim?.id ?? field] = claim;
+      } catch { /* skip bad value */ }
     }
   }
   return out;
@@ -87,8 +100,10 @@ export async function POST(req) {
   try { body = await req.json(); } catch { return Response.json({ error: 'Invalid JSON body.' }, { status: 400 }); }
 
   const op = String(body?.op || '');
+  // `claim` is scoped by show_id; update/archive/release target a single
+  // experiment by its hash field `id` (back-compat: legacy ids === show_id).
   const showId = body?.show_id != null ? String(body.show_id) : '';
-  if (!showId) return Response.json({ error: 'show_id is required.' }, { status: 400 });
+  const expId = body?.id != null ? String(body.id) : '';
 
   // Normalise a YYYY-MM-DD date input (or '' / null) to a clean string or null.
   const dateOrNull = (v) => {
@@ -97,52 +112,62 @@ export async function POST(req) {
   };
 
   const validOverride = (v) => (v === 'reached' || v === 'failed' ? v : null);
-  const getPrev = async () => { try { const raw = await kv(['HGET', KEY, showId]); return raw ? JSON.parse(raw) : null; } catch { return null; } };
+  const getPrev = async () => { try { const raw = await kv(['HGET', KEY, expId]); return raw ? JSON.parse(raw) : null; } catch { return null; } };
 
   try {
     if (op === 'release') {
-      await kv(['HDEL', KEY, showId]);
-      return Response.json({ ok: true, show_id: showId, claim: null });
+      if (!expId) return Response.json({ error: 'id is required.' }, { status: 400 });
+      await kv(['HDEL', KEY, expId]);
+      return Response.json({ ok: true, id: expId, claim: null });
     }
-    // 'archive' concludes the active experiment: append it to per-show history
-    // (with the final verdict + snapshot the client computed) and clear it from
-    // the active board.
+    // 'archive' concludes the experiment: append it to its show's history (with
+    // the final verdict, snapshot and conclude note the client supplied) and
+    // clear it from the active board.
     if (op === 'archive') {
+      if (!expId) return Response.json({ error: 'id is required.' }, { status: 400 });
       const prev = await getPrev();
       if (!prev) return Response.json({ error: 'No experiment to archive.' }, { status: 404 });
       const record = {
         ...prev,
+        id: prev.id ?? expId,
         verdict: validOverride(body?.verdict) || (body?.verdict === 'reached' || body?.verdict === 'failed' ? body.verdict : 'failed'),
         final_snapshot: body?.final_snapshot || null,
+        conclude_note: body?.conclude_note != null ? String(body.conclude_note) : null,
         concluded_at: new Date().toISOString(),
       };
+      const hid = String(prev.show_id ?? expId); // history stays keyed by show
       let hist = [];
-      try { const raw = await kv(['HGET', HKEY, showId]); hist = raw ? JSON.parse(raw) : []; } catch { hist = []; }
+      try { const raw = await kv(['HGET', HKEY, hid]); hist = raw ? JSON.parse(raw) : []; } catch { hist = []; }
       if (!Array.isArray(hist)) hist = [];
       hist.unshift(record); // newest first
-      await kv(['HSET', HKEY, showId, JSON.stringify(hist.slice(0, 50))]);
-      await kv(['HDEL', KEY, showId]);
-      return Response.json({ ok: true, show_id: showId, claim: null, archived: record });
+      await kv(['HSET', HKEY, hid, JSON.stringify(hist.slice(0, 50))]);
+      await kv(['HDEL', KEY, expId]);
+      return Response.json({ ok: true, id: expId, claim: null, archived: record });
     }
     // 'update' edits dates / note / verdict override on an existing claim.
     if (op === 'update') {
+      if (!expId) return Response.json({ error: 'id is required.' }, { status: 400 });
       const prev = await getPrev();
       if (!prev) return Response.json({ error: 'No experiment to update.' }, { status: 404 });
       const claim = {
         ...prev,
+        id: prev.id ?? expId,
         action_date: 'action_date' in body ? dateOrNull(body.action_date) : (prev.action_date ?? null),
         review_date: 'review_date' in body ? dateOrNull(body.review_date) : (prev.review_date ?? null),
         note: body?.note != null ? String(body.note) : (prev.note || ''),
         verdict_override: 'verdict_override' in body ? validOverride(body.verdict_override) : (prev.verdict_override ?? null),
       };
-      await kv(['HSET', KEY, showId, JSON.stringify(claim)]);
-      return Response.json({ ok: true, show_id: showId, claim });
+      await kv(['HSET', KEY, claim.id, JSON.stringify(claim)]);
+      return Response.json({ ok: true, id: claim.id, claim });
     }
     if (op === 'claim') {
+      if (!showId) return Response.json({ error: 'show_id is required.' }, { status: 400 });
       const by = String(body?.by || '').trim();
       if (!by) return Response.json({ error: 'A name (by) is required.' }, { status: 400 });
       const now = new Date().toISOString();
+      const id = newExperimentId(showId);
       const claim = {
+        id,
         show_id: showId,
         by,
         // assigned_by: set when someone (an assigner) assigns this to `by`;
@@ -157,8 +182,8 @@ export async function POST(req) {
         snapshot: body?.snapshot || null,
         verdict_override: null,
       };
-      await kv(['HSET', KEY, showId, JSON.stringify(claim)]);
-      return Response.json({ ok: true, show_id: showId, claim });
+      await kv(['HSET', KEY, id, JSON.stringify(claim)]);
+      return Response.json({ ok: true, id, claim });
     }
     return Response.json({ error: `Unknown op "${op}".` }, { status: 400 });
   } catch (err) {
