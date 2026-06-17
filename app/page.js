@@ -8,6 +8,7 @@ import RcaTab from '@/components/tabs/RcaTab';
 import ExplorerTab from '@/components/tabs/ExplorerTab';
 import ActionQueueTab from '@/components/tabs/ActionQueueTab';
 import ExperimentsTab from '@/components/tabs/ExperimentsTab';
+import ShowManagerTab from '@/components/tabs/ShowManagerTab';
 import DeepDiveTab from '@/components/tabs/DeepDiveTab';
 import GuidelineTab from '@/components/tabs/GuidelineTab';
 import StaleBanner from '@/components/Banners';
@@ -73,6 +74,7 @@ export default function Page() {
   else if (tab === 'explorer') content = (<><StaleBanner /><ExplorerTab /></>);
   else if (tab === 'queue') content = (<><StaleBanner /><ActionQueueTab /></>);
   else if (tab === 'experiments') content = (<><StaleBanner /><ExperimentsTab /></>);
+  else if (tab === 'manager') content = (<><StaleBanner /><ShowManagerTab /></>);
   else if (tab === 'deep') content = (<><StaleBanner /><DeepDiveTab /></>);
   else if (tab === 'guide') content = <GuidelineTab />;
 
