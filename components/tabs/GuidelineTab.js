@@ -54,6 +54,8 @@ const METRIC_GROUPS = [
   {
     title: 'Daily RCA — morning content RCA',
     metrics: [
+      ['Per-language HDC RCA (D-2 vs D-3)', 'The Daily RCA opens with a day-over-day HDC comparison — where we are now (D-2, the latest settled day) vs D-3 — for EVERY language: Hindi first, then a combined TTMK block (Tamil+Telugu+Malayalam+Kannada), then each of Tamil / Telugu / Malayalam / Kannada on its own. Each section is collapsible with an L0 D-2→D-3 summary chip, and has its own D-2/D-3 day pickers, executive RCA report, headline numbers, key deltas, manager breakdown, and L0 series lists. BU breakdown shows for Hindi only (regional languages have no BU split).'],
+      ['Executive RCA report', 'A short, direction-aware synthesis at the top of each language section: L0 move, the key math (view-pass / CR-pass / supply / avg views / avg CR), the driving lever (must move the SAME way as L0), any counter-current lever (a drag on a rise / a cushion on a fall), p90-threshold movement, the biggest BU/manager contributors, and first-time L0 conversions.'],
       ['Report dating (D-0 / D-1 / D-2)', 'A row is dated by the RUN day (D-0, the morning it represents). Within it: paid DAU is the prior day (D-1); HDC=L0 and the L0–L6 label split are D-2 (the latest fully-settled 24h window, in hdc_report_date); success rate is the D-10→D-4 settled cohort.'],
       ['Segments', 'Computed at three levels: TOTAL (all of hi+ta+te+ml+kn), per LANGUAGE, and — for Hindi only — per BU (Awareness / Income / Skill). Plus per-SHOW triage rows for Hindi.'],
       ['HDC (L0) movement', 'Daily HDC count and L0 rate vs the trailing 7-day average (Δ in percentage points), plus the 7-day HDC contribution (L0 ÷ supply) and the L4+L5 tail share.'],
@@ -70,6 +72,32 @@ const METRIC_GROUPS = [
       ['Auto verdict (Tracking → reached / failed)', 'The tool tracks the chosen metric against the target. If the target is hit on or before the review date → "Target reached". If the review date passes unmet → "Experiment failed". Until then it shows "Tracking". The owner can override (mark reached/failed) anytime.'],
       ['Needs attention → top of queue', 'A picked-up experiment whose review date has arrived, or whose target has been reached/failed, floats to the top of the Action Queue (red banner + tint), so nothing is missed.'],
       ['Conclude → history', 'The owner concludes an experiment ("save to history"), which moves it — with its final verdict — into the show\'s experiment history. History is shown read-only at the bottom of that show\'s Deep Dive. The Deep Dive shows the active experiment as a summary only; actions are taken in the Action Queue.'],
+      ['Row colour (Experiments tab)', 'A completed-and-successful experiment ("Target reached") is tinted light green; a "Experiment failed" experiment (or a tracking one whose review date has arrived) is tinted red. In-progress tracking rows stay white.'],
+      ['New-show experiment candidates', 'When a New Show Experiment lands on a stop verdict (Replace creator / Stop) it appears here as a STOP candidate; a Promote verdict appears as a PROMOTE candidate. The candidate reflects the EFFECTIVE verdict, so Deepak\'s manager override replaces the candidate in place rather than creating a duplicate.'],
+    ],
+  },
+  {
+    title: 'New Show Experiments — launch lifecycle',
+    metrics: [
+      ['What it tracks', 'A dedicated board for brand-new shows being launched. A show manager adds a show with its launch date, review date, hypothesis and (optionally) show id; the tool then tracks it through a 5→10 video experiment, judging launch timing, success rate and lifecycle verdict automatically. Stored in a shared KV board, visible to everyone.'],
+      ['Header KPIs', 'New shows picked up, Successful launches, Promoted shows, Closed shows — computed over the currently-filtered rows. Five filters scope the view: month of pickup, show manager, language, BU, and final verdict.'],
+      ['Video count (cap 10)', 'Counts the videos the show publishes from the pickup date, matched automatically by show id against the data. The first 5 are stage 1; videos 6–10 are the extension. The tool only ever considers the first 10 (an 11th+ is ignored).'],
+      ['Success rate (≥80% = pass)', 'Of the videos in the active stage (1–5, or 6–10 after extension), the share with a settled success outcome. ≥80% (i.e. 4/5) passes. The success rate restarts from 0 for the extension — only videos 6–10 count in stage 2.'],
+      ['Launch timing', 'The launch date is entered manually as the promise. Whether it was met is judged from the first video that goes live after pickup: if that first video\'s approved date is on/between the pickup and review dates → "launch successful"; if it only goes live after the review date → "launch date missed". A promoted show still proceeds even with a "launch date missed" tag.'],
+      ['Final verdict — stage 1 (5 videos)', '<5 videos by review → "Experiment failed: didn\'t meet minimum video requirement" (extendable). With 5: lifecycle STOP → Stop experiment; PROMOTE & SR≥80 → Promote; PROMOTE & SR<80 → Replace creator; CONTINUE & SR≥80 → Continue experiment with 5 more videos (extendable); CONTINUE & SR<80 → Replace creator. No show id by review → "No show ID found".'],
+      ['Final verdict — stage 2 (videos 6–10)', 'After an extension, judged on videos 6–10: <10 by the new review → minimum-video fail (no further extension). With 10: CONTINUE → "Stop experiment: didn\'t meet contribution%"; PROMOTE & SR<80 → "Replace creator: didn\'t meet SR requirement"; PROMOTE & SR≥80 → Promote.'],
+      ['Extension', 'Offered once when the verdict is "Continue experiment with 5 more videos" or a stage-1 minimum-video fail. Clicking it sets a new review date and continues the count from 5 toward 10 (max 10 — no second extension).'],
+      ['Experiment status', 'An editable workflow status set by the show manager: Sourcing creator → Creator finalised → Merchandise released → Agreement signed → Videos ready in draft. Once the experiment is extended it auto-locks to a read-only "Experiment extended" chip.'],
+      ['Show id (optional, auto-matched)', 'Optional at creation (the creator may not be finalised yet) and editable later in its own column. When exactly one show in the data shares the same name + language, the id is auto-filled. A show id is mandatory by the review date — without one the verdict is "No show ID found".'],
+      ['Manager override (Deepak)', 'Deepak has a Manager-verdict column (Replace creator / Continue / Promote) plus a remark. If set, it overrides the system verdict (the row shows an "Override Verdict" tag, launch tag preserved) and replaces any Action-Queue candidate in place. Only Deepak can delete an experiment, via a Yes/No confirmation.'],
+    ],
+  },
+  {
+    title: 'Show Manager — per-POC ownership',
+    metrics: [
+      ['Leaderboard & drill-in', 'Lists every POC with shows-managed, active experiments, picked-up, concluded, reached/failed and experiment success %, scoped to a chosen week or month. Click a manager to drill into their detail with KPI cards and tables.'],
+      ['KPI cards (per manager)', 'Shows managed, Avg HDC rate (over the period window), Avg success rate (7-day SR over the period window, ACTIVE shows only — so it tracks the week/month filter), Picked up, Concluded, Experiment success %, plus the four New-Show KPIs (picked up / successful launches / promoted / closed).'],
+      ['Sub-tabs', 'Three views: Experiments (one row per experiment in the period), Shows managed (HDC rate & success rate per assigned show over the window), and New show experiments (every launch experiment this manager owns, with status, videos, lifecycle, SR, launch tag and final verdict).'],
     ],
   },
 ];
