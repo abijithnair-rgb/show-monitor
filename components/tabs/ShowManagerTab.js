@@ -3,7 +3,7 @@ import { useMemo, useRef, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildModel, buildFatIndex, normStatus } from '@/lib/model';
 import { buildHdcIndex, windowedHdcRate } from '@/lib/hdc';
-import { windowedSuccessRate } from '@/lib/metrics';
+import { windowedSuccessRate, successRate } from '@/lib/metrics';
 import {
   ROSTER, currentFor, metricLabel, targetText, trackedValueText, evalVerdict, VERDICT_META, reviewDue,
   weekKey, monthKey, weekRange, monthRange, todayStr,
@@ -285,7 +285,14 @@ export default function ShowManagerTab() {
 
   const avg = (arr) => { const v = arr.filter((x) => x != null); return v.length ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 10) / 10 : null; };
   const avgHdc = avg(showRows.map((r) => (r.hr.n ? r.hr.pct : null)));
-  const avgSr = avg(showRows.map((r) => (r.sr.n ? r.sr.pct : null)));
+  // Avg success rate = the canonical 7-day SR (most recent 7 settled videos) of
+  // each managed show, averaged — NOT the period-windowed SR (which is often empty
+  // for the selected week/month and left the card blank).
+  const avgSr = avg(managedIds.map((id) => {
+    const eps = fatIdx?.get(id)?.eps;
+    const sr = eps ? successRate(eps, data.fatRows) : null;
+    return sr && sr.n ? sr.pct : null;
+  }));
 
   const cards = [
     ['Shows managed', managedCount(manager), true],
