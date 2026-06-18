@@ -3,11 +3,9 @@ import { useMemo } from 'react';
 import { useStore } from '@/store/useStore';
 import { normalizeSeriesRow } from '@/lib/hdcRca';
 import HdcRcaSection from '@/components/HdcRcaSection';
-import RegionalRca from '@/components/RegionalRca';
 
 // Daily RCA. Day-over-day HDC view (D-2 current vs D-3) per language: Hindi first,
 // then a combined TTMK block, then Tamil/Telugu/Malayalam/Kannada individually.
-// The old label-led regional RCA stays at the bottom.
 
 const TTMK = [
   { code: 'ta', name: 'Tamil' },
@@ -39,7 +37,7 @@ export default function RcaTab() {
         <h2 className="text-xl font-semibold">Daily RCA — HDC day-over-day (D-2 vs D-3)</h2>
         <p className="text-sm text-slate-500">
           Where we are now (<b>D-2</b>) compared against <b>D-3</b>, per language. Hindi first, then a
-          combined TTMK block, then each regional language. The label-led regional RCA is at the bottom.
+          combined TTMK block, then each regional language.
         </p>
       </div>
 
@@ -73,9 +71,6 @@ export default function RcaTab() {
           ))}
         </>
       )}
-
-      {/* Regional-language label-led RCA */}
-      <RegionalRca rcaRows={rcaRows} />
     </div>
   );
 }
