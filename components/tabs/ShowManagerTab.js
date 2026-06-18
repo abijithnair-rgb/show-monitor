@@ -274,10 +274,13 @@ export default function ShowManagerTab() {
   const nseRows = nseAll
     .filter(({ rec }) => rec.manager && (rec.manager === manager || firstTok(rec.manager) === manager.toLowerCase()))
     .sort((a, b) => String(b.rec.pickup_date || '').localeCompare(String(a.rec.pickup_date || '')));
+  // New-show experiment KPIs for this manager (matches the NSE tab's header).
+  const NSE_CLOSED = new Set([V.REPLACE, V.REPLACE_SR, V.STOP_LIFECYCLE, V.STOP_CONTRIB, V.LAUNCH_FAIL]);
   const nseKpis = {
     pickedUp: nseRows.length,
-    launched: nseRows.filter(({ v }) => v.count > 0).length,
-    failed: nseRows.filter(({ v }) => NSE_FAIL.has(v.effectiveVerdict)).length,
+    launches: nseRows.filter(({ v }) => v.tags.includes('launch successful')).length,
+    promoted: nseRows.filter(({ v }) => v.effectiveVerdict === V.PROMOTE).length,
+    closed: nseRows.filter(({ v }) => NSE_CLOSED.has(v.effectiveVerdict)).length,
   };
 
   const avg = (arr) => { const v = arr.filter((x) => x != null); return v.length ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 10) / 10 : null; };
@@ -291,6 +294,10 @@ export default function ShowManagerTab() {
     ['Picked up', g.pickedUp],
     ['Concluded', g.concluded],
     ['Experiment success %', g.win == null ? '—' : g.win + '%'],
+    ['New shows picked up', nseKpis.pickedUp],
+    ['Successful launches', nseKpis.launches],
+    ['Promoted shows', nseKpis.promoted],
+    ['Closed shows', nseKpis.closed],
   ];
 
   return (
@@ -335,14 +342,6 @@ export default function ShowManagerTab() {
 
         {detailView === 'nse' ? (
           <>
-            <div className="grid grid-cols-3 gap-3 px-4 pt-3">
-              {[['New shows picked up', nseKpis.pickedUp], ['Shows launched', nseKpis.launched], ['Failed experiments', nseKpis.failed]].map(([k, v]) => (
-                <div key={k} className="card p-3">
-                  <div className="text-[11px] text-slate-500">{k}</div>
-                  <div className="text-xl font-semibold text-slate-800">{v}</div>
-                </div>
-              ))}
-            </div>
             <table className="data-table">
               <thead>
                 <tr><th>Pickup</th><th>Show</th><th>Show id</th><th>Status</th><th>Videos</th><th>Lifecycle</th><th>Success rate</th><th>Launch</th><th>Review</th><th>Final verdict</th></tr>
