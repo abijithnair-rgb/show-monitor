@@ -67,6 +67,10 @@ const validManagerVerdict = (v) => {
   const ok = ['Replace creator', 'Continue experiment with 5 more videos', 'Promote'];
   return ok.includes(v) ? v : null;
 };
+// Manual experiment-status options the show manager can set. "Experiment extended"
+// is auto-applied on extension and is NOT a selectable option here.
+const EXP_STATUSES = ['Sourcing creator', 'Creator finalised', 'Merchandise released', 'Agreement signed', 'Videos ready in draft'];
+const validExpStatus = (v) => (EXP_STATUSES.includes(v) ? v : '');
 
 export async function GET() {
   if (!configured()) return Response.json({ configured: false, nse: {} });
@@ -109,6 +113,7 @@ export async function POST(req) {
         launch_date: dateOrNull(body?.launch_date),   // write-once
         review_date: dateOrNull(body?.review_date),   // write-once
         remarks: str(body?.remarks),
+        exp_status: validExpStatus(str(body?.exp_status).trim()),
         created_by: str(body?.created_by).trim(),
         created_at: now,
         stage: 1,
@@ -153,6 +158,16 @@ export async function POST(req) {
       const prev = await getPrev();
       if (!prev) return Response.json({ error: 'No experiment to update.' }, { status: 404 });
       const rec = { ...prev, id: prev.id ?? id, show_id: str(body?.show_id).trim() };
+      await kv(['HSET', KEY, rec.id, JSON.stringify(rec)]);
+      return Response.json({ ok: true, id: rec.id, record: rec });
+    }
+
+    // 'set_status' updates the manual experiment-workflow status (show manager).
+    if (op === 'set_status') {
+      if (!id) return Response.json({ error: 'id is required.' }, { status: 400 });
+      const prev = await getPrev();
+      if (!prev) return Response.json({ error: 'No experiment to update.' }, { status: 404 });
+      const rec = { ...prev, id: prev.id ?? id, exp_status: validExpStatus(str(body?.exp_status).trim()) };
       await kv(['HSET', KEY, rec.id, JSON.stringify(rec)]);
       return Response.json({ ok: true, id: rec.id, record: rec });
     }

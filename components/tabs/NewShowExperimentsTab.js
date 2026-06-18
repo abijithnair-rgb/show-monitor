@@ -24,13 +24,18 @@ const tagChip = (t) => (t === 'launch successful' ? 'chip-green' : t === 'Overri
 const srText = (sr) => (sr && sr.pct != null ? `${sr.pct}% (${sr.pass}/${sr.n})` : '—');
 const monthKey = (d) => String(d || '').slice(0, 7);
 
+// Manual experiment-workflow statuses the show manager can set. "Experiment
+// extended" is auto-applied when an experiment is extended (not selectable here).
+const EXP_STATUSES = ['Sourcing creator', 'Creator finalised', 'Merchandise released', 'Agreement signed', 'Videos ready in draft'];
+const EXP_EXTENDED = 'Experiment extended';
+
 // --- Add-show form ---
 function AddShowPanel({ categories, onClose }) {
   const userName = useStore((s) => s.userName);
   const createNseExperiment = useStore((s) => s.createNseExperiment);
   const [f, setF] = useState({
     language: '', manager: ROSTER.includes(userName) ? userName : '', category: '',
-    show_name: '', show_id: '', hypothesis: '', launch_date: '', review_date: '', remarks: '',
+    show_name: '', show_id: '', hypothesis: '', launch_date: '', review_date: '', remarks: '', exp_status: '',
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -77,6 +82,12 @@ function AddShowPanel({ categories, onClose }) {
         </label>
         <label className="text-xs text-slate-500 flex flex-col gap-1">Hypothesis
           <input className={inp} value={f.hypothesis} onChange={set('hypothesis')} placeholder="What are we testing?" />
+        </label>
+        <label className="text-xs text-slate-500 flex flex-col gap-1">Experiment status
+          <select className={inp} value={f.exp_status} onChange={set('exp_status')}>
+            <option value="">— set later</option>
+            {EXP_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
         </label>
         <label className="text-xs text-slate-500 flex flex-col gap-1">Launch date
           <input type="date" className={inp} value={f.launch_date} onChange={set('launch_date')} />
@@ -191,6 +202,41 @@ function ShowIdCell({ rec }) {
   );
 }
 
+// Experiment-workflow status: editable dropdown for the show manager, but once the
+// experiment is extended it auto-locks to "Experiment extended" (read-only chip).
+function ExpStatusCell({ rec }) {
+  const setNseStatus = useStore((s) => s.setNseStatus);
+  const [val, setVal] = useState(rec.exp_status || '');
+  const [busy, setBusy] = useState(false);
+  if (rec.extended) return <span className="chip chip-purple whitespace-nowrap">{EXP_EXTENDED}</span>;
+  return (
+    <select
+      className="border border-slate-300 rounded px-1.5 py-1 text-xs"
+      value={val}
+      disabled={busy}
+      onChange={async (e) => { const next = e.target.value; setVal(next); setBusy(true); try { await setNseStatus(rec.id, next); } finally { setBusy(false); } }}
+    >
+      <option value="">— set status</option>
+      {EXP_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+    </select>
+  );
+}
+
+// Small yes/no delete confirmation overlay (Deepak only).
+function DeleteConfirm({ onYes, onNo }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={onNo}>
+      <div className="card p-5 max-w-xs text-center" onClick={(e) => e.stopPropagation()}>
+        <div className="text-sm font-medium mb-4">Do you want to delete this experiment?</div>
+        <div className="flex gap-2 justify-center">
+          <button className="btn btn-primary" onClick={onYes}>Yes</button>
+          <button className="btn btn-ghost" onClick={onNo}>No</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function NewShowExperimentsTab() {
   const data = useStore((s) => s.data());
   const nse = useStore((s) => s.nse);
@@ -203,6 +249,7 @@ export default function NewShowExperimentsTab() {
   const manager = isManager(userName);
   const today = todayStr();
   const [adding, setAdding] = useState(false);
+  const [confirmDelId, setConfirmDelId] = useState(null); // experiment id pending delete
   const [flt, setFlt] = useState({ month: '', manager: '', language: '', bu: '', verdict: '' });
 
   const model = useMemo(() => buildModel(data), [data]);
@@ -266,7 +313,8 @@ export default function NewShowExperimentsTab() {
     (!flt.verdict || (r.v.effectiveVerdict || 'Tracking') === flt.verdict)
   );
 
-  const colCount = manager ? 12 : 11; // +1 for the delete action column
+  // 12 base columns; manager adds Manager verdict + the delete action column.
+  const colCount = manager ? 14 : 12;
 
   if (!nseConfigured) {
     return (
@@ -335,15 +383,17 @@ export default function NewShowExperimentsTab() {
               <th>Pickup date</th>
               <th>Launch date</th>
               <th>Show name</th>
+              <th>Show id</th>
               <th>Show manager</th>
               <th>Current status</th>
+              <th>Experiment status</th>
               <th>Videos</th>
               <th>Lifecycle verdict</th>
               <th>Success rate</th>
               <th>Review date</th>
               {manager && <th>Manager verdict</th>}
               <th>Final verdict</th>
-              <th></th>
+              {manager && <th></th>}
             </tr>
           </thead>
           <tbody>
@@ -359,16 +409,17 @@ export default function NewShowExperimentsTab() {
                     <div className="mt-1 flex gap-1 flex-wrap items-center">
                       <span className="chip chip-blue">{LANG_NAMES[rec.language] || rec.language || '?'}</span>
                       {rec.category && <span className="chip chip-purple">{rec.category}</span>}
-                      <ShowIdCell key={rec.id + ':' + (rec.show_id || '')} rec={rec} />
                     </div>
                     {rec.hypothesis && <div className="text-xs text-slate-500 mt-1" style={{ maxWidth: 220 }}>{rec.hypothesis}</div>}
                   </td>
+                  <td><ShowIdCell key={rec.id + ':' + (rec.show_id || '')} rec={rec} /></td>
                   <td className="font-medium text-slate-700">{rec.manager || '—'}</td>
                   <td>
                     <span className={'chip ' + (show?.status === 'experiment' ? 'chip-amber' : show?.status === 'active' ? 'chip-green' : 'chip-grey')}>
                       {show ? show.status : 'not in data'}
                     </span>
                   </td>
+                  <td><ExpStatusCell key={rec.id + ':' + (rec.extended ? 'ext' : rec.exp_status || '')} rec={rec} /></td>
                   <td className="font-semibold">{v.stage === 2 ? v.count : Math.min(v.count, 5)}<span className="hint">{v.stage === 2 ? ' /10' : ' /5'}</span></td>
                   <td>{v.lifecycle ? <span className="chip chip-grey">{v.lifecycle}</span> : <span className="text-slate-300">—</span>}</td>
                   <td>{srText(sr)}</td>
@@ -378,10 +429,12 @@ export default function NewShowExperimentsTab() {
                   </td>
                   {manager && <td><ManagerVerdictCell rec={rec} /></td>}
                   <td><VerdictCell rec={rec} v={v} /></td>
-                  <td>
-                    <button className="text-slate-300 hover:text-red-600 text-xs" title="Delete experiment"
-                      onClick={() => { if (confirm('Delete this experiment?')) deleteNseExperiment(rec.id); }}>✕</button>
-                  </td>
+                  {manager && (
+                    <td>
+                      <button className="text-slate-300 hover:text-red-600 text-xs" title="Delete experiment"
+                        onClick={() => setConfirmDelId(rec.id)}>✕</button>
+                    </td>
+                  )}
                 </tr>
               );
             }) : (
@@ -392,6 +445,13 @@ export default function NewShowExperimentsTab() {
           </tbody>
         </table>
       </div>
+
+      {confirmDelId && (
+        <DeleteConfirm
+          onYes={() => { deleteNseExperiment(confirmDelId); setConfirmDelId(null); }}
+          onNo={() => setConfirmDelId(null)}
+        />
+      )}
     </div>
   );
 }

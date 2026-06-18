@@ -3,7 +3,7 @@ import { idbSet, idbGet, idbDel } from '@/lib/idb';
 import { sampleData } from '@/lib/sample';
 import { fetchSheets, fetchRemote, remoteStatus } from '@/lib/remote';
 import { fetchActions, claimAction, updateClaim, archiveAction, releaseAction, setManagerAction } from '@/lib/actions';
-import { fetchNse, createNse, extendNse, setNseManagerVerdict, setNseShowId, deleteNse } from '@/lib/nse';
+import { fetchNse, createNse, extendNse, setNseManagerVerdict, setNseShowId, setNseStatus, deleteNse } from '@/lib/nse';
 
 // Global app state (replaces the original mutable `state` object).
 export const useStore = create((set, get) => ({
@@ -232,6 +232,11 @@ export const useStore = create((set, get) => ({
   },
   setNseShowId: async (id, showId) => {
     const { record } = await setNseShowId(id, showId);
+    get().applyNse(id, record);
+    return record;
+  },
+  setNseStatus: async (id, status) => {
+    const { record } = await setNseStatus(id, status);
     get().applyNse(id, record);
     return record;
   },
