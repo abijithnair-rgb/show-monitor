@@ -87,7 +87,6 @@ export default function Page() {
           <Logo />
           <div>
             <div className="font-semibold leading-tight">Seekho Show Monitor</div>
-            <div className="text-xs text-slate-500 leading-tight">Lifecycle verdict × fatigue diagnosis — reconciled into one call per show.</div>
           </div>
           <Nav />
         </div>
