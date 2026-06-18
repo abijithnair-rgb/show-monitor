@@ -306,7 +306,7 @@ export default function NewShowExperimentsTab() {
       .map((rec) => {
         const show = byId.get(String(rec.show_id)) || null;
         const eps = fatIdx?.get(String(rec.show_id))?.eps || null;
-        const v = computeNseVerdict(rec, show, eps, today);
+        const v = computeNseVerdict(rec, show, data.hdcRows, eps, today);
         const bu = (show && show.bu) || buByCat.get(rec.category) || '';
         return { rec, show, v, bu };
       })

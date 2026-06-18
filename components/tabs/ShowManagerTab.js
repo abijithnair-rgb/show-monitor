@@ -107,10 +107,10 @@ export default function ShowManagerTab() {
     return Object.values(nse || {}).map((rec) => {
       const s = byId.get(String(rec.show_id)) || null;
       const eps = fatIdx?.get(String(rec.show_id))?.eps || null;
-      const v = computeNseVerdict(rec, s, eps, today);
+      const v = computeNseVerdict(rec, s, data.hdcRows, eps, today);
       return { rec, s, v };
     });
-  }, [nse, byId, fatIdx]);
+  }, [nse, byId, fatIdx, data.hdcRows]);
 
   // Period list, generated from the actual data coverage (hdc publish dates, ep
   // approved dates, experiment dates) so we never offer empty future periods.

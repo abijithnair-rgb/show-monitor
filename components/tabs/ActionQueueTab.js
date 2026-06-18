@@ -226,7 +226,7 @@ export default function ActionQueueTab() {
       .map((rec) => {
         const show = byIdModel.get(String(rec.show_id)) || null;
         const eps = fatIdx?.get(String(rec.show_id))?.eps || null;
-        const v = computeNseVerdict(rec, show, eps, today);
+        const v = computeNseVerdict(rec, show, data.hdcRows, eps, today);
         if (!v.queueCandidate) return null;
         const decision = v.queueCandidate === 'promote' ? 'PROMOTE' : 'STOP';
         const s = show || { id: String(rec.show_id), title: rec.show_name, language: rec.language, category: rec.category, bu: '', status: 'experiment', manager: rec.manager, fat: null, eval: null };
