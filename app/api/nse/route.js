@@ -91,9 +91,11 @@ export async function POST(req) {
 
   try {
     if (op === 'create') {
+      // show_id is OPTIONAL at creation — the creator may not be finalised yet.
+      // It can be filled later (manually or auto-matched) and is mandatory by the
+      // review date (enforced in the verdict engine).
       const showId = str(body?.show_id).trim();
-      if (!showId) return Response.json({ error: 'show_id is required.' }, { status: 400 });
-      const newRecId = newId(showId);
+      const newRecId = newId(showId || 'new');
       const now = new Date().toISOString();
       const rec = {
         id: newRecId,
@@ -141,6 +143,16 @@ export async function POST(req) {
         manager_verdict: 'manager_verdict' in body ? validManagerVerdict(body.manager_verdict) : (prev.manager_verdict ?? null),
         manager_remark: body?.manager_remark != null ? str(body.manager_remark) : (prev.manager_remark || ''),
       };
+      await kv(['HSET', KEY, rec.id, JSON.stringify(rec)]);
+      return Response.json({ ok: true, id: rec.id, record: rec });
+    }
+
+    // 'set_show_id' fills/updates the show_id later (manual edit or auto-match).
+    if (op === 'set_show_id') {
+      if (!id) return Response.json({ error: 'id is required.' }, { status: 400 });
+      const prev = await getPrev();
+      if (!prev) return Response.json({ error: 'No experiment to update.' }, { status: 404 });
+      const rec = { ...prev, id: prev.id ?? id, show_id: str(body?.show_id).trim() };
       await kv(['HSET', KEY, rec.id, JSON.stringify(rec)]);
       return Response.json({ ok: true, id: rec.id, record: rec });
     }

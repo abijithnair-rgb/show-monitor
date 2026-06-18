@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildModel, buildFatIndex } from '@/lib/model';
 import { ROSTER, isManager } from '@/lib/ownership';
@@ -16,7 +16,7 @@ function verdictChip(v) {
   if (!v) return 'chip-grey';
   if (v === V.PROMOTE) return 'chip-green';
   if (v === V.CONTINUE_5) return 'chip-amber';
-  if (v === V.MIN_VIDEO_FAIL || v === V.AWAIT_LIFECYCLE) return 'chip-grey';
+  if (v === V.MIN_VIDEO_FAIL || v === V.AWAIT_LIFECYCLE || v === V.NO_SHOW_ID) return 'chip-amber';
   if (v === V.REPLACE || v === V.REPLACE_SR || v === V.STOP_LIFECYCLE || v === V.STOP_CONTRIB || v === V.LAUNCH_FAIL) return 'chip-red';
   return 'chip-grey';
 }
@@ -37,7 +37,7 @@ function AddShowPanel({ categories, onClose }) {
   const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
 
   const save = async () => {
-    if (!f.show_id.trim() || !f.show_name.trim()) return setErr('Show name and show id are required.');
+    if (!f.show_name.trim()) return setErr('Show name is required.');
     if (!f.language) return setErr('Pick a language.');
     if (!f.manager) return setErr('Pick a show manager.');
     if (!f.launch_date || !f.review_date) return setErr('Set both a launch date and a review date.');
@@ -73,7 +73,7 @@ function AddShowPanel({ categories, onClose }) {
           <input className={inp} value={f.show_name} onChange={set('show_name')} placeholder="Show name" />
         </label>
         <label className="text-xs text-slate-500 flex flex-col gap-1">Show id
-          <input className={inp} value={f.show_id} onChange={set('show_id')} placeholder="Show id" />
+          <input className={inp} value={f.show_id} onChange={set('show_id')} placeholder="Optional — add later" />
         </label>
         <label className="text-xs text-slate-500 flex flex-col gap-1">Hypothesis
           <input className={inp} value={f.hypothesis} onChange={set('hypothesis')} placeholder="What are we testing?" />
@@ -166,6 +166,31 @@ function ManagerVerdictCell({ rec }) {
   );
 }
 
+// Inline editable show-id (creators get finalised after pickup, so the id can be
+// added later). Remounts when the persisted show_id changes (e.g. auto-matched).
+function ShowIdCell({ rec }) {
+  const setNseShowId = useStore((s) => s.setNseShowId);
+  const [val, setVal] = useState(rec.show_id || '');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    const next = String(val).trim();
+    if (next === String(rec.show_id || '').trim()) return;
+    setBusy(true);
+    try { await setNseShowId(rec.id, next); } finally { setBusy(false); }
+  };
+  return (
+    <input
+      className="border border-slate-300 rounded px-1 py-0.5 text-xs w-24"
+      value={val}
+      placeholder="add show id"
+      disabled={busy}
+      onChange={(e) => setVal(e.target.value)}
+      onBlur={save}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+    />
+  );
+}
+
 export default function NewShowExperimentsTab() {
   const data = useStore((s) => s.data());
   const nse = useStore((s) => s.nse);
@@ -173,6 +198,7 @@ export default function NewShowExperimentsTab() {
   const userName = useStore((s) => s.userName);
   const setUserName = useStore((s) => s.setUserName);
   const deleteNseExperiment = useStore((s) => s.deleteNseExperiment);
+  const setNseShowId = useStore((s) => s.setNseShowId);
 
   const manager = isManager(userName);
   const today = todayStr();
@@ -189,6 +215,30 @@ export default function NewShowExperimentsTab() {
     model.forEach((s) => { if (s.category && s.bu) m.set(s.category, s.bu); });
     return m;
   }, [model]);
+
+  // Auto-match a missing show_id from the data: when exactly one show in the model
+  // shares the experiment's (show name + language), adopt its id and persist it.
+  // Ambiguous (>1 match) or no match → left blank for manual entry.
+  const idByNameLang = useMemo(() => {
+    const id = new Map(), count = new Map();
+    model.forEach((s) => {
+      const k = String(s.title || '').trim().toLowerCase() + '|' + (s.language || '');
+      count.set(k, (count.get(k) || 0) + 1);
+      if (!id.has(k)) id.set(k, String(s.id));
+    });
+    return { id, count };
+  }, [model]);
+  const triedMatch = useRef(new Set());
+  useEffect(() => {
+    Object.values(nse || {}).forEach((rec) => {
+      if (String(rec.show_id || '').trim() || triedMatch.current.has(rec.id)) return;
+      const k = String(rec.show_name || '').trim().toLowerCase() + '|' + (rec.language || '');
+      if (idByNameLang.count.get(k) === 1) {
+        triedMatch.current.add(rec.id);
+        setNseShowId(rec.id, idByNameLang.id.get(k)).catch(() => {});
+      }
+    });
+  }, [nse, idByNameLang, setNseShowId]);
 
   const rows = useMemo(() => {
     return Object.values(nse || {})
@@ -306,10 +356,10 @@ export default function NewShowExperimentsTab() {
                   <td className="whitespace-nowrap">{fmtDate(rec.launch_date)}</td>
                   <td>
                     <div className="font-medium">{rec.show_name || `#${rec.show_id}`}</div>
-                    <div className="mt-1 flex gap-1 flex-wrap">
+                    <div className="mt-1 flex gap-1 flex-wrap items-center">
                       <span className="chip chip-blue">{LANG_NAMES[rec.language] || rec.language || '?'}</span>
                       {rec.category && <span className="chip chip-purple">{rec.category}</span>}
-                      <span className="hint">#{rec.show_id}</span>
+                      <ShowIdCell key={rec.id + ':' + (rec.show_id || '')} rec={rec} />
                     </div>
                     {rec.hypothesis && <div className="text-xs text-slate-500 mt-1" style={{ maxWidth: 220 }}>{rec.hypothesis}</div>}
                   </td>
