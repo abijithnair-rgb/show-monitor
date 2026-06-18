@@ -1,7 +1,50 @@
 'use client';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { ACTION_META } from '@/lib/constants';
 import { LANG_NAMES } from '@/lib/format';
+
+// Sentinel value for the "Unassigned" show-manager filter option.
+export const UNASSIGNED = '__unassigned__';
+
+// Multi-select checkbox dropdown (used for Category — pick several at once).
+function MultiDd({ label, options, selected, onToggle, onClear, fmt }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+  const n = selected.length;
+  return (
+    <div className="text-xs text-slate-500 flex flex-col gap-1 relative" ref={ref}>
+      {label}
+      <button
+        type="button"
+        className="border border-slate-300 rounded-md px-2 py-1 text-sm text-slate-800 text-left min-w-[140px] flex items-center justify-between gap-2"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="truncate">{n === 0 ? 'All' : n === 1 ? (fmt ? fmt(selected[0]) : selected[0]) : `${n} selected`}</span>
+        <span className="text-slate-400">▾</span>
+      </button>
+      {open && (
+        <div className="absolute z-30 top-full mt-1 max-h-64 overflow-y-auto bg-white border border-slate-300 rounded-md shadow-lg p-1 min-w-[200px]">
+          {n > 0 && (
+            <button type="button" className="w-full text-left px-2 py-1 text-xs text-blue-600 hover:bg-slate-50 rounded" onClick={onClear}>Clear selection</button>
+          )}
+          {options.map((o) => (
+            <label key={o} className="flex items-center gap-2 px-2 py-1 text-sm text-slate-700 hover:bg-slate-50 rounded cursor-pointer">
+              <input type="checkbox" checked={selected.includes(o)} onChange={() => onToggle(o)} />
+              <span className="truncate">{fmt ? fmt(o) : o}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Controlled filter bar (real React inputs — no innerHTML, so search keeps focus).
 export default function FilterBar({ model, hideAgreement }) {
@@ -17,9 +60,13 @@ export default function FilterBar({ model, hideAgreement }) {
   const bus = uniq(model.map((s) => s.bu));
   const stats = uniq(model.map((s) => s.status));
   const managers = uniq(model.map((s) => s.manager));
+  const hasUnassigned = model.some((s) => !s.manager);
   const acts = [...new Set(model.map((s) => s.rec.key))];
 
-  const Dd = ({ label, k, options, fmt }) => (
+  const selectedCats = Array.isArray(filters.category) ? filters.category : (filters.category ? [filters.category] : []);
+  const toggleCat = (c) => setFilter('category', selectedCats.includes(c) ? selectedCats.filter((x) => x !== c) : [...selectedCats, c]);
+
+  const Dd = ({ label, k, options, fmt, extra }) => (
     <label className="text-xs text-slate-500 flex flex-col gap-1">
       {label}
       <select
@@ -28,6 +75,7 @@ export default function FilterBar({ model, hideAgreement }) {
         onChange={(e) => setFilter(k, e.target.value)}
       >
         <option value="">All</option>
+        {extra}
         {options.map((o) => (
           <option key={o} value={o}>{fmt ? fmt(o) : o}</option>
         ))}
@@ -39,9 +87,11 @@ export default function FilterBar({ model, hideAgreement }) {
     <div className="flex flex-wrap gap-3 items-end mb-3">
       <Dd label="Language" k="language" options={langs} fmt={(l) => LANG_NAMES[l] || l} />
       <Dd label="BU" k="bu" options={bus} />
-      <Dd label="Category" k="category" options={cats} />
+      <MultiDd label="Category" options={cats} selected={selectedCats} onToggle={toggleCat} onClear={() => setFilter('category', [])} />
       <Dd label="Status" k="status" options={stats} fmt={(s) => s[0].toUpperCase() + s.slice(1)} />
-      {managers.length > 0 && <Dd label="Show manager" k="manager" options={managers} />}
+      {(managers.length > 0 || hasUnassigned) && (
+        <Dd label="Show manager" k="manager" options={managers} extra={hasUnassigned ? <option value={UNASSIGNED}>Unassigned</option> : null} />
+      )}
       <Dd label="Recommendation" k="action" options={acts} fmt={(k) => (ACTION_META[k] || { label: k }).label} />
       {!hideAgreement && (
         <Dd label="Agreement" k="agreement" options={['aligned-positive', 'aligned-negative', 'conflict', 'partial', 'one-lens']} />
@@ -65,9 +115,12 @@ export function applyFilters(model, filters, search) {
   let m = model;
   if (filters.language) m = m.filter((s) => s.language === filters.language);
   if (filters.bu) m = m.filter((s) => s.bu === filters.bu);
-  if (filters.category) m = m.filter((s) => s.category === filters.category);
+  // category may be a multi-select array (or a legacy single string).
+  const cats = Array.isArray(filters.category) ? filters.category : (filters.category ? [filters.category] : []);
+  if (cats.length) m = m.filter((s) => cats.includes(s.category));
   if (filters.status) m = m.filter((s) => s.status === filters.status);
-  if (filters.manager) m = m.filter((s) => (s.manager || '') === filters.manager);
+  if (filters.manager === UNASSIGNED) m = m.filter((s) => !s.manager);
+  else if (filters.manager) m = m.filter((s) => (s.manager || '') === filters.manager);
   if (filters.action) m = m.filter((s) => s.rec.key === filters.action);
   if (filters.agreement) m = m.filter((s) => s.rec.agreement === filters.agreement);
   if (search) {
