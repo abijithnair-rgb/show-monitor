@@ -327,6 +327,16 @@ export default function NewShowExperimentsTab() {
     (!flt.verdict || (r.v.effectiveVerdict || 'Tracking') === flt.verdict)
   );
 
+  // Header KPIs over the filtered set: picked up (total), successful launches
+  // (launch-successful tag), promoted, and closed (any stop verdict).
+  const CLOSED = new Set([V.REPLACE, V.REPLACE_SR, V.STOP_LIFECYCLE, V.STOP_CONTRIB, V.LAUNCH_FAIL]);
+  const kpis = [
+    ['New shows picked up', filtered.length],
+    ['Successful launches', filtered.filter((r) => r.v.tags.includes('launch successful')).length],
+    ['Promoted shows', filtered.filter((r) => r.v.effectiveVerdict === V.PROMOTE).length],
+    ['Closed shows', filtered.filter((r) => CLOSED.has(r.v.effectiveVerdict)).length],
+  ];
+
   // 12 base columns; manager adds Manager verdict + the delete action column.
   const colCount = manager ? 14 : 12;
 
@@ -362,6 +372,16 @@ export default function NewShowExperimentsTab() {
           </div>
         </div>
         <button className="btn btn-primary" onClick={() => setAdding((a) => !a)}>+ Add show</button>
+      </div>
+
+      {/* Header KPIs — experiment metrics over the filtered set */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+        {kpis.map(([k, v]) => (
+          <div key={k} className="card p-3">
+            <div className="text-[11px] text-slate-500">{k}</div>
+            <div className="text-2xl font-semibold text-slate-800">{v}</div>
+          </div>
+        ))}
       </div>
 
       {adding && <AddShowPanel categories={categories} onClose={() => setAdding(false)} />}
