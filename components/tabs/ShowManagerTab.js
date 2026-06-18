@@ -278,7 +278,9 @@ export default function ShowManagerTab() {
   const NSE_CLOSED = new Set([V.REPLACE, V.REPLACE_SR, V.STOP_LIFECYCLE, V.STOP_CONTRIB, V.LAUNCH_FAIL]);
   const nseKpis = {
     pickedUp: nseRows.length,
-    launches: nseRows.filter(({ v }) => v.tags.includes('launch successful')).length,
+    // Successful launch = a video was published between the pickup date and the
+    // promised launch date.
+    launches: nseRows.filter(({ v }) => v.launchedInWindow).length,
     promoted: nseRows.filter(({ v }) => v.effectiveVerdict === V.PROMOTE).length,
     closed: nseRows.filter(({ v }) => NSE_CLOSED.has(v.effectiveVerdict)).length,
   };

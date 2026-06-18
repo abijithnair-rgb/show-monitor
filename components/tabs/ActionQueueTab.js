@@ -3,11 +3,11 @@ import { Fragment, useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildModel, buildFatIndex } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
-import { metricSnapshot, currentFor, reviewDue, evalVerdict, VERDICT_META, metricLabel, canAssign, ROSTER, defaultMetricForReasons } from '@/lib/ownership';
+import { metricSnapshot, currentFor, reviewDue, evalVerdict, VERDICT_META, metricLabel, canAssign, ROSTER, defaultMetricForReasons, cumulativeVideoCount, todayStr } from '@/lib/ownership';
 import { successRate } from '@/lib/metrics';
 import { computeNseVerdict } from '@/lib/nseVerdict';
 import PickupPanel from '@/components/PickupPanel';
-import { fmtDate, weeksAgo, timeAgo, fmtPct, fmtNum, num, LANG_NAMES } from '@/lib/format';
+import { fmtDate, weeksAgo, timeAgo, fmtPct, fmtNum, num, addDays, LANG_NAMES } from '@/lib/format';
 
 // A show is flagged "L5-heavy" when ≥5/7 (≈71%) of the videos it published in
 // the last 7 days landed in the worst view band (L5 — below the day×language
@@ -167,6 +167,15 @@ export default function ActionQueueTab() {
       .map(({ s, l5, srLow }) => {
         if (s.status === 'inactive') return null;
         const ev = s.eval?.cur || {};
+        // New-show guard: keep a freshly-launched show OUT of the queue until it
+        // has published 5 videos after its launch date — unless it's already
+        // older than a month (launch date > 30 days ago), in which case surface
+        // it even with fewer than 5. Shows with no launch date are treated as
+        // established and pass through.
+        const launch = ev.launch_date ? String(ev.launch_date).slice(0, 10) : null;
+        if (launch && launch > addDays(todayStr(), -30)) {
+          if (cumulativeVideoCount(data.hdcRows, s.id, launch, todayStr()) < 5) return null;
+        }
         const raw = String(ev.experimental_decision || '').toUpperCase();
         const isExp = !!s.life?.isExp;
         const expDecision = isExp ? dispDecision(s.life.verdictRaw) : null;
