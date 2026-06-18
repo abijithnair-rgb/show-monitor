@@ -5,7 +5,7 @@ import { fmtDate, timeAgo } from '@/lib/format';
 import {
   METRIC_OPTIONS, metricLabel, reviewDue, todayStr,
   evalVerdict, VERDICT_META, progressLine, sincePickupParts,
-  srTargetOptions, LABEL_BANDS, LABEL_MAX, EXPERIMENT_MAX_DAYS, labelDefaultOp, makeLabelTarget, impliedTarget,
+  LABEL_BANDS, LABEL_MAX, EXPERIMENT_MAX_DAYS, labelDefaultOp, makeLabelTarget, makeFrequencyTarget, FREQ_MIN, FREQ_MAX, impliedTarget,
   targetText, trackedValueText, POCS, canManageClaim,
 } from '@/lib/ownership';
 
@@ -71,10 +71,12 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
   const [nameDraft, setNameDraft] = useState('');
   const [assignee, setAssignee] = useState('');
   const [metric, setMetric] = useState(initialMetric);
-  const [srTargetId, setSrTargetId] = useState('');
+  const [srValue, setSrValue] = useState(80);     // free % entry for success-rate target
   const [labelBand, setLabelBand] = useState(initialBand);
   const [labelOp, setLabelOp] = useState(labelDefaultOp(initialBand));
   const [labelN, setLabelN] = useState(1);
+  const [freqOp, setFreqOp] = useState('gte');     // 'gte' = up to, 'lte' = down to
+  const [freqN, setFreqN] = useState(3);
   const [remark, setRemark] = useState('');
   const [actionDate, setActionDate] = useState(claim?.action_date || '');
   const [reviewDate, setReviewDate] = useState(claim?.review_date || '');
@@ -84,7 +86,7 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
   const [err, setErr] = useState(null);
 
   // When the metric or label band changes, reset the dependent target inputs.
-  function onMetricChange(m) { setMetric(m); setSrTargetId(''); }
+  function onMetricChange(m) { setMetric(m); }
   function onBandChange(b) { setLabelBand(b); setLabelOp(labelDefaultOp(b)); }
 
   // Owner OR a manager may edit/conclude/discard this experiment.
@@ -104,12 +106,18 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
   // Build the target object from the metric-specific inputs.
   function buildTarget() {
     if (metric === 'success_rate') {
-      const opts = srTargetOptions();
-      return (opts.find((o) => o.id === srTargetId) || null)?.target || null;
+      const v = Number(srValue);
+      if (!(v >= 1 && v <= 100)) return null; // free % entry, 1–100
+      return { kind: 'sr_gte', value: Math.round(v * 10) / 10 };
     }
     if (metric === 'label') {
       if (!(Number(labelN) >= 0)) return null;
       return makeLabelTarget(labelBand, labelOp, labelN); // cumulative "produce by review"
+    }
+    if (metric === 'frequency') {
+      const n = Number(freqN);
+      if (!(n >= FREQ_MIN && n <= FREQ_MAX)) return null;
+      return makeFrequencyTarget(freqOp, n);
     }
     return impliedTarget(metric); // hook/pace/ending fix, stop, promote
   }
@@ -123,7 +131,7 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
       setErr('Enter your name first so the team knows who picked this up.'); return;
     }
     const target = buildTarget();
-    if (!target) { setErr(metric === 'success_rate' ? 'Choose a success-rate target.' : 'Set a valid target.'); return; }
+    if (!target) { setErr(metric === 'success_rate' ? 'Enter a success-rate target between 1 and 100%.' : metric === 'frequency' ? `Enter a frequency between ${FREQ_MIN} and ${FREQ_MAX}.` : 'Set a valid target.'); return; }
     if (!assign && !userName) setUserName(owner);
     run(async () => {
       await claimShow(s.id, owner, snapshotNow, {
@@ -208,14 +216,41 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
 
               {/* Target — metric-specific */}
               {metric === 'success_rate' && (
-                <label className="text-xs text-slate-500 flex flex-col gap-1">
-                  Target
-                  <select value={srTargetId} onChange={(e) => setSrTargetId(e.target.value)}
-                    className="border border-slate-300 rounded-md px-2 py-1 text-sm min-w-[180px]">
-                    <option value="">Choose a target…</option>
-                    {srTargetOptions().map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-                  </select>
-                </label>
+                <div className="flex gap-3 items-end flex-wrap">
+                  <label className="text-xs text-slate-500 flex flex-col gap-1">
+                    Target success rate
+                    <div className="flex items-center gap-1">
+                      <span className="text-sm text-slate-600">≥</span>
+                      <input type="number" min="1" max="100" step="1" value={srValue}
+                        onChange={(e) => setSrValue(e.target.value)}
+                        className="border border-slate-300 rounded-md px-2 py-1 text-sm w-20" />
+                      <span className="text-sm text-slate-600">%</span>
+                    </div>
+                  </label>
+                  <span className="text-xs text-slate-500 pb-1.5">
+                    current 7-day SR: <b className="text-slate-700">{snapshotNow?.successRate != null ? `${snapshotNow.successRate}%` : '—'}</b>
+                  </span>
+                </div>
+              )}
+
+              {metric === 'frequency' && (
+                <div className="flex gap-2 items-end flex-wrap">
+                  <label className="text-xs text-slate-500 flex flex-col gap-1">
+                    Frequency
+                    <select value={freqOp} onChange={(e) => setFreqOp(e.target.value)}
+                      className="border border-slate-300 rounded-md px-2 py-1 text-sm">
+                      <option value="gte">up to</option>
+                      <option value="lte">down to</option>
+                    </select>
+                  </label>
+                  <label className="text-xs text-slate-500 flex flex-col gap-1">
+                    &nbsp;
+                    <input type="number" min={FREQ_MIN} max={FREQ_MAX} step="1" value={freqN}
+                      onChange={(e) => setFreqN(e.target.value)}
+                      className="border border-slate-300 rounded-md px-2 py-1 text-sm w-16" />
+                  </label>
+                  <span className="text-sm text-slate-600 pb-1.5">videos/week by the review date</span>
+                </div>
               )}
 
               {metric === 'label' && (
@@ -246,7 +281,7 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
                 </div>
               )}
 
-              {metric !== 'success_rate' && metric !== 'label' && (
+              {metric !== 'success_rate' && metric !== 'label' && metric !== 'frequency' && (
                 <label className="text-xs text-slate-500 flex flex-col gap-1">
                   Action
                   <span className="text-sm text-slate-700 font-medium border border-slate-200 rounded-md px-2 py-1 bg-white">{targetText(impliedTarget(metric))}</span>
@@ -257,7 +292,10 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
               <div className="hint">Counts the {labelBand} videos this show publishes between the "actions to be taken by" date and the review date (cumulative) — giving the POC time to act first.</div>
             )}
             {metric === 'success_rate' && (
-              <div className="hint">Measured on the videos this show posts between the "actions to be taken by" date and the review date — giving the POC time to act first.</div>
+              <div className="hint">Measured (settled videos only) on the videos this show posts between the "actions to be taken by" date and the review date — giving the POC time to act first.</div>
+            )}
+            {metric === 'frequency' && (
+              <div className="hint">Counts all videos this show publishes between the "actions to be taken by" date and the review date — {freqOp === 'lte' ? `reached when it cuts to ≤ ${freqN}` : `reached when it raises to ≥ ${freqN}`} by then.</div>
             )}
             {(metric === 'hook_fix' || metric === 'pace_fix' || metric === 'ending_fix') && (
               <div className="hint">Reached when the show's drop-off is healthy (no dominant failure mode) by the review date — fixing the {metric.replace('_fix', '')} issue so nothing else is failing. Otherwise failed.</div>
