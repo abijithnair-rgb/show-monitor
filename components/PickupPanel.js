@@ -295,7 +295,7 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
               <div className="hint">Measured (settled videos only) on the videos this show posts between the "actions to be taken by" date and the review date — giving the POC time to act first.</div>
             )}
             {metric === 'frequency' && (
-              <div className="hint">Counts all videos this show publishes between the "actions to be taken by" date and the review date — {freqOp === 'lte' ? `reached when it cuts to ≤ ${freqN}` : `reached when it raises to ≥ ${freqN}`} by then.</div>
+              <div className="hint">Cadence = videos in a 7-day window (the last 7 days up to the review date). {freqOp === 'lte' ? `Reached when it cuts to ≤ ${freqN}/wk` : `Reached when it raises to ≥ ${freqN}/wk`} AND the success rate from the "actions to be taken by" date to review is ≥ 75%. Otherwise failed.</div>
             )}
             {(metric === 'hook_fix' || metric === 'pace_fix' || metric === 'ending_fix') && (
               <div className="hint">Reached when the show's drop-off is healthy (no dominant failure mode) by the review date — fixing the {metric.replace('_fix', '')} issue so nothing else is failing. Otherwise failed.</div>
