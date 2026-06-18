@@ -3,7 +3,7 @@ import { useMemo, useRef, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildModel, buildFatIndex, normStatus } from '@/lib/model';
 import { buildHdcIndex, windowedHdcRate } from '@/lib/hdc';
-import { windowedSuccessRate, successRate } from '@/lib/metrics';
+import { windowedSuccessRate } from '@/lib/metrics';
 import {
   ROSTER, currentFor, metricLabel, targetText, trackedValueText, evalVerdict, VERDICT_META, reviewDue,
   weekKey, monthKey, weekRange, monthRange, todayStr,
@@ -285,15 +285,10 @@ export default function ShowManagerTab() {
 
   const avg = (arr) => { const v = arr.filter((x) => x != null); return v.length ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 10) / 10 : null; };
   const avgHdc = avg(showRows.map((r) => (r.hr.n ? r.hr.pct : null)));
-  // Avg success rate = the canonical 7-day SR (most recent 7 settled videos),
-  // averaged over the manager's ACTIVE shows only (experimental shows are still
-  // being launched, so they're excluded from this steady-state metric).
-  const avgSr = avg(managedIds.map((id) => {
-    if (byId.get(id)?.status !== 'active') return null;
-    const eps = fatIdx?.get(id)?.eps;
-    const sr = eps ? successRate(eps, data.fatRows) : null;
-    return sr && sr.n ? sr.pct : null;
-  }));
+  // Avg success rate = the success rate over the SELECTED period window (so it
+  // tracks the week/month filter), averaged over the manager's ACTIVE shows only
+  // (experimental shows are still being launched, so they're excluded).
+  const avgSr = avg(showRows.map((r) => (r.status === 'active' && r.sr.n ? r.sr.pct : null)));
 
   const cards = [
     ['Shows managed', managedCount(manager), true],
