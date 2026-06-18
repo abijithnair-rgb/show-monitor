@@ -222,6 +222,20 @@ function ExpStatusCell({ rec }) {
   );
 }
 
+// "hypothesis" CTA under the show name — click to reveal the hypothesis text.
+function HypothesisCell({ text }) {
+  const [open, setOpen] = useState(false);
+  if (!text) return null;
+  return (
+    <div className="mt-1">
+      <button className="text-xs text-blue-600 underline" onClick={() => setOpen((o) => !o)}>
+        {open ? 'hide hypothesis' : 'hypothesis'}
+      </button>
+      {open && <div className="text-xs text-slate-600 mt-1" style={{ maxWidth: 220 }}>{text}</div>}
+    </div>
+  );
+}
+
 // Small yes/no delete confirmation overlay (Deepak only).
 function DeleteConfirm({ onYes, onNo }) {
   return (
@@ -410,7 +424,7 @@ export default function NewShowExperimentsTab() {
                       <span className="chip chip-blue">{LANG_NAMES[rec.language] || rec.language || '?'}</span>
                       {rec.category && <span className="chip chip-purple">{rec.category}</span>}
                     </div>
-                    {rec.hypothesis && <div className="text-xs text-slate-500 mt-1" style={{ maxWidth: 220 }}>{rec.hypothesis}</div>}
+                    <HypothesisCell text={rec.hypothesis} />
                   </td>
                   <td><ShowIdCell key={rec.id + ':' + (rec.show_id || '')} rec={rec} /></td>
                   <td className="font-medium text-slate-700">{rec.manager || '—'}</td>
