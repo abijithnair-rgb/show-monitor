@@ -28,6 +28,7 @@ const monthKey = (d) => String(d || '').slice(0, 7);
 // extended" is auto-applied when an experiment is extended (not selectable here).
 const EXP_STATUSES = ['Sourcing creator', 'Creator finalised', 'Merchandise released', 'Agreement signed', 'Videos ready in draft'];
 const EXP_EXTENDED = 'Experiment extended';
+const EXP_LAUNCHED = 'Launched';
 
 // --- Add-show form ---
 function AddShowPanel({ categories, onClose }) {
@@ -202,13 +203,16 @@ function ShowIdCell({ rec }) {
   );
 }
 
-// Experiment-workflow status: editable dropdown for the show manager, but once the
-// experiment is extended it auto-locks to "Experiment extended" (read-only chip).
-function ExpStatusCell({ rec }) {
+// Experiment-workflow status: an editable dropdown for the show manager up to
+// launch. It auto-locks to a read-only chip once the show progresses:
+// "Launched" once its first video goes live, then "Experiment extended" after an
+// extension. Auto statuses are never selectable in the dropdown.
+function ExpStatusCell({ rec, launched }) {
   const setNseStatus = useStore((s) => s.setNseStatus);
   const [val, setVal] = useState(rec.exp_status || '');
   const [busy, setBusy] = useState(false);
   if (rec.extended) return <span className="chip chip-purple whitespace-nowrap">{EXP_EXTENDED}</span>;
+  if (launched) return <span className="chip chip-green whitespace-nowrap">{EXP_LAUNCHED}</span>;
   return (
     <select
       className="border border-slate-300 rounded px-1.5 py-1 text-xs"
@@ -453,7 +457,7 @@ export default function NewShowExperimentsTab() {
                       {show ? show.status : 'not in data'}
                     </span>
                   </td>
-                  <td><ExpStatusCell key={rec.id + ':' + (rec.extended ? 'ext' : rec.exp_status || '')} rec={rec} /></td>
+                  <td><ExpStatusCell key={rec.id + ':' + (rec.extended ? 'ext' : v.count > 0 ? 'launched' : rec.exp_status || '')} rec={rec} launched={v.count > 0} /></td>
                   <td className="font-semibold">{v.stage === 2 ? v.count : Math.min(v.count, 5)}<span className="hint">{v.stage === 2 ? ' /10' : ' /5'}</span></td>
                   <td>{v.lifecycle ? <span className="chip chip-grey">{v.lifecycle}</span> : <span className="text-slate-300">—</span>}</td>
                   <td>{srText(sr)}</td>
