@@ -5,6 +5,7 @@ import { buildModel, buildFatIndex } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
 import { metricSnapshot, currentFor, reviewDue, evalVerdict, VERDICT_META, metricLabel, canAssign, ROSTER, defaultMetricForReasons } from '@/lib/ownership';
 import { successRate } from '@/lib/metrics';
+import { computeNseVerdict } from '@/lib/nseVerdict';
 import PickupPanel from '@/components/PickupPanel';
 import { fmtDate, weeksAgo, timeAgo, fmtPct, fmtNum, num, LANG_NAMES } from '@/lib/format';
 
@@ -115,6 +116,7 @@ export default function ActionQueueTab() {
   const openDeepDive = useStore((s) => s.openDeepDive);
   const actions = useStore((s) => s.actions);
   const actionsConfigured = useStore((s) => s.actionsConfigured);
+  const nse = useStore((s) => s.nse);
   const userName = useStore((s) => s.userName);
   const setUserName = useStore((s) => s.setUserName);
 
@@ -213,23 +215,55 @@ export default function ActionQueueTab() {
       .filter(Boolean);
   }, [model, hdcIdx, fatIdx, data.fatRows]);
 
-  const langs = [...new Set(rows.map((r) => r.s.language).filter(Boolean))].sort();
-  const statuses = [...new Set(rows.map((r) => r.s.status).filter(Boolean))].sort();
-  const bus = [...new Set(rows.map((r) => r.s.bu).filter(Boolean))].sort();
-  const cats = [...new Set(rows.map((r) => r.s.category).filter(Boolean))].sort();
-  const reasonsList = [...new Set(rows.flatMap((r) => r.reasonTags))].sort();
-  const managers = [...new Set(rows.map((r) => r.s.manager).filter(Boolean))].sort();
+  // New-show experiments that have landed on a stop/promote verdict become queue
+  // candidates too. The effective verdict already folds in Deepak's override, so
+  // an override replaces the candidate rather than duplicating it. These take
+  // precedence over any model-derived row for the same show.
+  const byIdModel = useMemo(() => new Map(model.map((s) => [String(s.id), s])), [model]);
+  const today = useMemo(() => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; }, []);
+  const nseRows = useMemo(() => {
+    return Object.values(nse || {})
+      .map((rec) => {
+        const show = byIdModel.get(String(rec.show_id)) || null;
+        const eps = fatIdx?.get(String(rec.show_id))?.eps || null;
+        const v = computeNseVerdict(rec, show, eps, today);
+        if (!v.queueCandidate) return null;
+        const decision = v.queueCandidate === 'promote' ? 'PROMOTE' : 'STOP';
+        const s = show || { id: String(rec.show_id), title: rec.show_name, language: rec.language, category: rec.category, bu: '', status: 'experiment', manager: rec.manager, fat: null, eval: null };
+        return {
+          s, decision, isExp: true,
+          reasonTags: ['New-show experiment', decision === 'STOP' ? 'Stop' : 'Promote'],
+          derived: false, launch: rec.launch_date || null,
+          trajectory: null, confidence: null,
+          why: `New-show experiment → ${v.effectiveVerdict}${rec.manager_verdict ? ' (manager override)' : ''}.`,
+        };
+      })
+      .filter(Boolean);
+  }, [nse, byIdModel, fatIdx, today]);
 
-  const decisionCount = (d) => rows.filter((r) => r.decision === d).length;
+  // Merge: NSE candidates win over a model row for the same show id.
+  const mergedRows = useMemo(() => {
+    const nseIds = new Set(nseRows.map((r) => String(r.s.id)));
+    return [...nseRows, ...rows.filter((r) => !nseIds.has(String(r.s.id)))];
+  }, [nseRows, rows]);
+
+  const langs = [...new Set(mergedRows.map((r) => r.s.language).filter(Boolean))].sort();
+  const statuses = [...new Set(mergedRows.map((r) => r.s.status).filter(Boolean))].sort();
+  const bus = [...new Set(mergedRows.map((r) => r.s.bu).filter(Boolean))].sort();
+  const cats = [...new Set(mergedRows.map((r) => r.s.category).filter(Boolean))].sort();
+  const reasonsList = [...new Set(mergedRows.flatMap((r) => r.reasonTags))].sort();
+  const managers = [...new Set(mergedRows.map((r) => r.s.manager).filter(Boolean))].sort();
+
+  const decisionCount = (d) => mergedRows.filter((r) => r.decision === d).length;
 
   const FIX_PILLS = [
     ['HOOK', 'Hook', '#fef3c7', '#92400e'],
     ['PACE', 'Pace / mid', '#fef3c7', '#92400e'],
     ['ENDING', 'Ending', '#e0e7ff', '#3730a3'],
   ];
-  const fixCount = (code) => rows.filter((r) => String(r.s.fat?.mode || '').toUpperCase() === code).length;
+  const fixCount = (code) => mergedRows.filter((r) => String(r.s.fat?.mode || '').toUpperCase() === code).length;
 
-  let filtered = rows.filter((r) => {
+  let filtered = mergedRows.filter((r) => {
     if (language && r.s.language !== language) return false;
     if (status && r.s.status !== status) return false;
     if (bu && r.s.bu !== bu) return false;

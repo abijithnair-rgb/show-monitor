@@ -8,6 +8,7 @@ import RcaTab from '@/components/tabs/RcaTab';
 import ExplorerTab from '@/components/tabs/ExplorerTab';
 import ActionQueueTab from '@/components/tabs/ActionQueueTab';
 import ExperimentsTab from '@/components/tabs/ExperimentsTab';
+import NewShowExperimentsTab from '@/components/tabs/NewShowExperimentsTab';
 import ShowManagerTab from '@/components/tabs/ShowManagerTab';
 import DeepDiveTab from '@/components/tabs/DeepDiveTab';
 import GuidelineTab from '@/components/tabs/GuidelineTab';
@@ -67,13 +68,14 @@ export default function Page() {
   let content = null;
   if (!hydrated) {
     content = <div className="text-sm text-slate-400 mt-10 text-center">Loading…</div>;
-  } else if (tab !== 'data' && tab !== 'guide' && tab !== 'rca' && !hasData) {
+  } else if (tab !== 'data' && tab !== 'guide' && tab !== 'rca' && tab !== 'nse' && !hasData) {
     content = <EmptyState />;
   } else if (tab === 'data') content = <DataTab />;
   else if (tab === 'rca') content = <RcaTab />;
   else if (tab === 'explorer') content = (<><StaleBanner /><ExplorerTab /></>);
   else if (tab === 'queue') content = (<><StaleBanner /><ActionQueueTab /></>);
   else if (tab === 'experiments') content = (<><StaleBanner /><ExperimentsTab /></>);
+  else if (tab === 'nse') content = (<><StaleBanner /><NewShowExperimentsTab /></>);
   else if (tab === 'manager') content = (<><StaleBanner /><ShowManagerTab /></>);
   else if (tab === 'deep') content = (<><StaleBanner /><DeepDiveTab /></>);
   else if (tab === 'guide') content = <GuidelineTab />;

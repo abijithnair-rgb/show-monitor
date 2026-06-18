@@ -3,6 +3,7 @@ import { idbSet, idbGet, idbDel } from '@/lib/idb';
 import { sampleData } from '@/lib/sample';
 import { fetchSheets, fetchRemote, remoteStatus } from '@/lib/remote';
 import { fetchActions, claimAction, updateClaim, archiveAction, releaseAction, setManagerAction } from '@/lib/actions';
+import { fetchNse, createNse, extendNse, setNseManagerVerdict, deleteNse } from '@/lib/nse';
 
 // Global app state (replaces the original mutable `state` object).
 export const useStore = create((set, get) => ({
@@ -19,6 +20,9 @@ export const useStore = create((set, get) => ({
   // (a show can hold several), history = { show_id: [concluded experiments] },
   // managers = { show_id: name } self-assigned manager overrides.
   actions: {}, history: {}, managers: {}, actionsConfigured: false, userName: '',
+
+  // New Show Experiments board (Vercel KV). nse = { experimentId: record }.
+  nse: {}, nseConfigured: false,
 
   tab: 'data',
   // metricBand/metricOp/metricX: Explorer-only label/SR threshold filter
@@ -106,6 +110,7 @@ export const useStore = create((set, get) => ({
       patch.tab = patch.evalRows || patch.fatRows ? 'explorer' : 'data';
       set(patch);
       get().loadActions();
+      get().loadNse();
     } catch (err) {
       console.warn('idb load failed', err);
       set({ hydrated: true });
@@ -195,6 +200,41 @@ export const useStore = create((set, get) => ({
     get().applyClaim(id, null);
   },
 
+  // ---- New Show Experiments board (Vercel KV) ----
+  loadNse: async () => {
+    try {
+      const { configured, nse } = await fetchNse();
+      set({ nseConfigured: !!configured, nse: nse || {} });
+    } catch {
+      set({ nseConfigured: false });
+    }
+  },
+  // Patch a single record into the map by id (null = removed).
+  applyNse: (id, record) => set((st) => {
+    const next = { ...st.nse };
+    if (record) next[String(record.id ?? id)] = record; else delete next[String(id)];
+    return { nse: next };
+  }),
+  createNseExperiment: async (rec) => {
+    const { id, record } = await createNse(rec);
+    get().applyNse(id, record);
+    return record;
+  },
+  extendNseExperiment: async (id, review_date2) => {
+    const { record } = await extendNse(id, review_date2);
+    get().applyNse(id, record);
+    return record;
+  },
+  setNseManagerVerdict: async (id, verdict, remark) => {
+    const { record } = await setNseManagerVerdict(id, verdict, remark);
+    get().applyNse(id, record);
+    return record;
+  },
+  deleteNseExperiment: async (id) => {
+    await deleteNse(id);
+    get().applyNse(id, null);
+  },
+
   // ---- Google-Sheet auto-sync ----
   saveSettings: async () => {
     const s = get();
@@ -208,6 +248,7 @@ export const useStore = create((set, get) => ({
   autoSync: async ({ silent } = {}) => {
     const s = get();
     s.loadActions(); // refresh the shared ownership board alongside data sync
+    s.loadNse();     // refresh the new-show experiments board too
     const cfg = await s.checkRemote();
     if (cfg.combined || cfg.rca) return s.syncFromRedash({ silent });
     if (s.sheetCombinedUrl || s.sheetRcaUrl) return s.syncFromSheets({ silent });
