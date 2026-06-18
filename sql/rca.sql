@@ -598,7 +598,8 @@ seg_unified AS (
     CAST(NULL AS FLOAT64) AS hdc_achieved_cr,
     CAST(NULL AS INT64)   AS hdc_view_pass,
     CAST(NULL AS INT64)   AS hdc_cr_pass,
-    CAST(NULL AS DATE)    AS hdc_first_l0_date
+    CAST(NULL AS DATE)    AS hdc_first_l0_date,
+    CAST(NULL AS STRING)  AS hdc_language
   FROM dau_final a
   FULL OUTER JOIN content_final c ON a.level=c.level AND a.segment=c.segment AND a.date_=c.date_
   LEFT JOIN label_final l
@@ -658,12 +659,14 @@ show_unified AS (
     CAST(NULL AS FLOAT64) AS hdc_achieved_cr,
     CAST(NULL AS INT64)   AS hdc_view_pass,
     CAST(NULL AS INT64)   AS hdc_cr_pass,
-    CAST(NULL AS DATE)    AS hdc_first_l0_date
+    CAST(NULL AS DATE)    AS hdc_first_l0_date,
+    CAST(NULL AS STRING)  AS hdc_language
   FROM show_reco r
 ),
 
 -- ===========================================================================
--- UNIFY (C) — HDC_SERIES ROWS  (Hindi day-over-day RCA detail; one row/series)
+-- UNIFY (C) — HDC_SERIES ROWS  (Hindi + TTMK day-over-day RCA detail; one row/series)
+-- hdc_language carries hi/ta/te/ml/kn so the tab can split per language.
 -- The tab compares two publish days and rolls these up client-side.
 -- ===========================================================================
 series_first_l0 AS (   -- earliest L0 publish_date per show within the window
@@ -712,11 +715,12 @@ series_unified AS (
     CAST(l2.actual_cr AS FLOAT64) AS hdc_achieved_cr,
     l2.view_thr AS hdc_view_pass,
     l2.cr_thr   AS hdc_cr_pass,
-    f.first_l0_date AS hdc_first_l0_date
+    f.first_l0_date AS hdc_first_l0_date,
+    l2.language AS hdc_language
   FROM labeled2 l2
   JOIN lbl_series ls ON ls.series_id = l2.series_id
   LEFT JOIN series_first_l0 f ON f.show_id = l2.show_id
-  WHERE l2.language = 'hi'
+  WHERE l2.language IN ('hi','ta','te','ml','kn')   -- Hindi + TTMK day-over-day detail
 )
 
 SELECT * FROM seg_unified
