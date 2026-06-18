@@ -8,9 +8,20 @@ import {
   ROSTER, currentFor, metricLabel, targetText, trackedValueText, evalVerdict, VERDICT_META, reviewDue,
   weekKey, monthKey, weekRange, monthRange, todayStr,
 } from '@/lib/ownership';
+import { computeNseVerdict, V } from '@/lib/nseVerdict';
 import { fmtDate, LANG_NAMES } from '@/lib/format';
 
 const slice10 = (v) => String(v || '').slice(0, 10);
+
+// Terminal NSE verdicts that count as a failed new-show experiment.
+const NSE_FAIL = new Set([V.MIN_VIDEO_FAIL, V.LAUNCH_FAIL, V.REPLACE, V.REPLACE_SR, V.STOP_LIFECYCLE, V.STOP_CONTRIB]);
+const nseVerdictChip = (v) => {
+  if (v === V.PROMOTE) return 'chip-green';
+  if (v === V.CONTINUE_5) return 'chip-amber';
+  if (NSE_FAIL.has(v)) return 'chip-red';
+  return 'chip-grey';
+};
+const firstTok = (v) => String(v || '').trim().toLowerCase().split(/[\s._@]+/)[0];
 
 // Per-POC experiment tracking & ownership, scoped to a chosen week/month. A
 // "show manager" = the POC who owns (picked up / was assigned) an experiment.
@@ -18,6 +29,7 @@ export default function ShowManagerTab() {
   const data = useStore((s) => s.data());
   const actions = useStore((s) => s.actions);
   const history = useStore((s) => s.history);
+  const nse = useStore((s) => s.nse);
   const actionsConfigured = useStore((s) => s.actionsConfigured);
   const userName = useStore((s) => s.userName);
   const openDeepDive = useStore((s) => s.openDeepDive);
@@ -38,7 +50,6 @@ export default function ShowManagerTab() {
   const managedByPoc = useMemo(() => {
     const m = new Map();
     ROSTER.forEach((p) => m.set(p, new Set()));
-    const firstTok = (v) => String(v || '').trim().toLowerCase().split(/[\s._@]+/)[0];
     for (const s of model) {
       const mgr = s.manager;
       if (!mgr) continue;
@@ -88,6 +99,18 @@ export default function ShowManagerTab() {
     }
     return out;
   }, [actions, history, byId, data, hdcIdx, fatIdx]);
+
+  // New-show experiments (the NSE board), with each record's live verdict. Keyed
+  // by its assigned show manager so the single-manager view can list them.
+  const nseAll = useMemo(() => {
+    const today = todayStr();
+    return Object.values(nse || {}).map((rec) => {
+      const s = byId.get(String(rec.show_id)) || null;
+      const eps = fatIdx?.get(String(rec.show_id))?.eps || null;
+      const v = computeNseVerdict(rec, s, eps, today);
+      return { rec, s, v };
+    });
+  }, [nse, byId, fatIdx]);
 
   // Period list, generated from the actual data coverage (hdc publish dates, ep
   // approved dates, experiment dates) so we never offer empty future periods.
@@ -246,6 +269,17 @@ export default function ShowManagerTab() {
     return String(b.claimedAt || '').localeCompare(String(a.claimedAt || ''));
   });
 
+  // This manager's new-show experiments (match by exact name or first-name token),
+  // newest pickup first. Shown in full (not period-scoped) so nothing is hidden.
+  const nseRows = nseAll
+    .filter(({ rec }) => rec.manager && (rec.manager === manager || firstTok(rec.manager) === manager.toLowerCase()))
+    .sort((a, b) => String(b.rec.pickup_date || '').localeCompare(String(a.rec.pickup_date || '')));
+  const nseKpis = {
+    pickedUp: nseRows.length,
+    launched: nseRows.filter(({ v }) => v.count > 0).length,
+    failed: nseRows.filter(({ v }) => NSE_FAIL.has(v.effectiveVerdict)).length,
+  };
+
   const avg = (arr) => { const v = arr.filter((x) => x != null); return v.length ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 10) / 10 : null; };
   const avgHdc = avg(showRows.map((r) => (r.hr.n ? r.hr.pct : null)));
   const avgSr = avg(showRows.map((r) => (r.sr.n ? r.sr.pct : null)));
@@ -285,11 +319,12 @@ export default function ShowManagerTab() {
       <div className="card overflow-x-auto" ref={tableRef}>
         <div className="px-4 pt-3 flex items-center justify-between gap-2 flex-wrap">
           <div className="text-sm font-semibold">
-            {detailView === 'shows' ? 'Shows managed' : 'Experiments'} — {periodLabel(selPeriod)}
-            <span className="hint"> ({detailView === 'shows' ? 'HDC rate & success rate over the window' : 'one row per experiment'})</span>
+            {detailView === 'nse' ? 'New show experiments' : detailView === 'shows' ? 'Shows managed' : 'Experiments'}
+            {detailView !== 'nse' && <> — {periodLabel(selPeriod)}</>}
+            <span className="hint"> ({detailView === 'nse' ? 'all new-show launch experiments owned by this manager' : detailView === 'shows' ? 'HDC rate & success rate over the window' : 'one row per experiment'})</span>
           </div>
           <div className="inline-flex rounded-md border border-slate-300 overflow-hidden text-xs">
-            {[['experiments', 'Experiments'], ['shows', 'Shows managed']].map(([k, label]) => (
+            {[['experiments', 'Experiments'], ['shows', 'Shows managed'], ['nse', 'New show experiments']].map(([k, label]) => (
               <button key={k} onClick={() => setDetailView(k)}
                 className={`px-3 py-1.5 ${detailView === k ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
                 {label}
@@ -298,7 +333,52 @@ export default function ShowManagerTab() {
           </div>
         </div>
 
-        {detailView === 'shows' ? (
+        {detailView === 'nse' ? (
+          <>
+            <div className="grid grid-cols-3 gap-3 px-4 pt-3">
+              {[['New shows picked up', nseKpis.pickedUp], ['Shows launched', nseKpis.launched], ['Failed experiments', nseKpis.failed]].map(([k, v]) => (
+                <div key={k} className="card p-3">
+                  <div className="text-[11px] text-slate-500">{k}</div>
+                  <div className="text-xl font-semibold text-slate-800">{v}</div>
+                </div>
+              ))}
+            </div>
+            <table className="data-table">
+              <thead>
+                <tr><th>Pickup</th><th>Show</th><th>Show id</th><th>Status</th><th>Videos</th><th>Lifecycle</th><th>Success rate</th><th>Launch</th><th>Review</th><th>Final verdict</th></tr>
+              </thead>
+              <tbody>
+                {nseRows.length ? nseRows.map(({ rec, s, v }) => {
+                  const sr = v.stage === 2 ? v.sr2 : v.sr1;
+                  const activeReview = rec.extended ? rec.review_date2 : rec.review_date;
+                  const launchTag = v.tags.find((t) => t === 'launch successful' || t === 'launch date missed');
+                  return (
+                    <tr key={rec.id} className={s ? 'row-clickable' : ''} onClick={() => s && openDeepDive(s.id)}>
+                      <td className="whitespace-nowrap">{fmtDate(rec.pickup_date)}</td>
+                      <td>
+                        <div className="font-medium">{rec.show_name || `#${rec.show_id}`}</div>
+                        <div className="mt-1 flex gap-1 flex-wrap">
+                          <span className="chip chip-blue">{LANG_NAMES[rec.language] || rec.language || '?'}</span>
+                          {rec.category && <span className="chip chip-purple">{rec.category}</span>}
+                        </div>
+                      </td>
+                      <td className="text-sm text-slate-600">{rec.show_id || <span className="text-slate-300">—</span>}</td>
+                      <td><span className={'chip ' + (s?.status === 'experiment' ? 'chip-amber' : s?.status === 'active' ? 'chip-green' : 'chip-grey')}>{s ? s.status : 'not in data'}</span></td>
+                      <td className="font-semibold">{v.stage === 2 ? v.count : Math.min(v.count, 5)}<span className="hint">{v.stage === 2 ? ' /10' : ' /5'}</span></td>
+                      <td>{v.lifecycle ? <span className="chip chip-grey">{v.lifecycle}</span> : <span className="text-slate-300">—</span>}</td>
+                      <td>{sr && sr.pct != null ? <span className="font-semibold">{sr.pct}%</span> : <span className="text-slate-300">—</span>}{sr && sr.n ? <div className="hint">{sr.pass}/{sr.n}</div> : null}</td>
+                      <td className="whitespace-nowrap">{fmtDate(rec.launch_date)}{launchTag && <div><span className={'chip ' + (launchTag === 'launch successful' ? 'chip-green' : 'chip-amber')}>{launchTag}</span></div>}</td>
+                      <td className="whitespace-nowrap">{fmtDate(activeReview)}{rec.extended && <div className="hint">extended</div>}</td>
+                      <td>{v.effectiveVerdict ? <span className={'chip ' + nseVerdictChip(v.effectiveVerdict)}>{v.effectiveVerdict}</span> : <span className="chip chip-grey">Tracking</span>}</td>
+                    </tr>
+                  );
+                }) : (
+                  <tr><td colSpan={10} className="text-center text-slate-400 py-6">No new-show experiments owned by {manager}.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </>
+        ) : detailView === 'shows' ? (
           <table className="data-table">
             <thead>
               <tr><th>Show</th><th>Status</th><th>HDC rate</th><th>Success rate</th><th>Experiments</th><th>Verdict</th></tr>
