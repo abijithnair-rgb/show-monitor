@@ -91,8 +91,10 @@ export default function ExperimentsTab() {
               filtered.map(({ claim, s, cur, verdict }) => {
                 const vm = VERDICT_META[verdict] || VERDICT_META.tracking;
                 const due = reviewDue(claim) && verdict === 'tracking';
+                // reached (completed & successful) → light green; failed or review-due → red.
+                const rowTone = verdict === 'reached' ? ' bg-green-50' : (verdict === 'failed' || due) ? ' bg-red-50' : '';
                 return (
-                  <tr key={claim.id || claim.show_id} className={'row-clickable' + (verdict !== 'tracking' || due ? ' bg-red-50' : '')}
+                  <tr key={claim.id || claim.show_id} className={'row-clickable' + rowTone}
                     onClick={() => s && openDeepDive(s.id)}>
                     <td>
                       <div className="font-medium">{s?.title || `#${claim.show_id}`}</div>
