@@ -103,8 +103,8 @@ export default function Page() {
         <div className="max-w-[1320px] mx-auto px-5 py-3 flex items-center gap-3">
           <NavHistoryButtons />
           <Logo />
-          <div>
-            <div className="font-semibold leading-tight">Seekho Show OS</div>
+          <div className="shrink-0">
+            <div className="font-semibold leading-tight whitespace-nowrap">Seekho Show OS</div>
           </div>
           <Nav />
         </div>
