@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { idbSet, idbGet, idbDel } from '@/lib/idb';
 import { sampleData } from '@/lib/sample';
 import { fetchSheets, fetchRemote, remoteStatus } from '@/lib/remote';
-import { fetchActions, claimAction, updateClaim, archiveAction, releaseAction, setManagerAction, deleteHistoryAction } from '@/lib/actions';
+import { fetchActions, claimAction, updateClaim, archiveAction, releaseAction, setManagerAction } from '@/lib/actions';
 import { fetchNse, createNse, extendNse, setNseManagerVerdict, setNseShowId, setNseStatus, deleteNse } from '@/lib/nse';
 
 // Global app state (replaces the original mutable `state` object).
@@ -198,17 +198,6 @@ export const useStore = create((set, get) => ({
   releaseShow: async (id) => {
     await releaseAction(id);
     get().applyClaim(id, null);
-  },
-  // Permanently delete a concluded experiment from a show's history.
-  deleteHistory: async (id, showId) => {
-    const sid = String(showId);
-    await deleteHistoryAction(id, sid);
-    set((st) => {
-      const history = { ...st.history };
-      const next = (history[sid] || []).filter((r) => String(r?.id ?? '') !== String(id));
-      if (next.length) history[sid] = next; else delete history[sid];
-      return { history };
-    });
   },
 
   // ---- New Show Experiments board (Vercel KV) ----

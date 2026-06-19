@@ -261,14 +261,7 @@ function DeepBody({ s, data }) {
 function ExperimentHistory({ s }) {
   const configured = useStore((st) => st.actionsConfigured);
   const history = useStore((st) => st.history[String(s.id)]) || [];
-  const deleteHistory = useStore((st) => st.deleteHistory);
   if (!configured || history.length === 0) return null;
-  const onDelete = (h) => {
-    if (!h?.id) return;
-    if (confirm('Permanently delete this concluded experiment from history? All its details will be gone.')) {
-      deleteHistory(h.id, s.id);
-    }
-  };
   return (
     <div className="card p-4 mb-4">
       <div className="font-semibold mb-2">Experiment history ({history.length})</div>
@@ -285,7 +278,6 @@ function ExperimentHistory({ s }) {
                 <span className="hint">
                   {fmtDate(h.claimed_at)}{h.review_date ? ` → review ${fmtDate(h.review_date)}` : ''}{h.concluded_at ? ` · concluded ${fmtDate(h.concluded_at)}` : ''}
                 </span>
-                {h.id && <button className="ml-auto text-slate-300 hover:text-red-600" title="Delete from history" onClick={() => onDelete(h)}>✕</button>}
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
                 <HistCell k="Target" v={targetText(h.target)} />

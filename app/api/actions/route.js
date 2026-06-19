@@ -168,20 +168,6 @@ export async function POST(req) {
       await kv(['HDEL', KEY, expId]);
       return Response.json({ ok: true, id: expId, claim: null, archived: record });
     }
-    // 'delete_history' permanently removes a concluded experiment from a show's
-    // history (by experiment id). If it was the last one, the show's history hash
-    // field is cleared entirely so no trace remains.
-    if (op === 'delete_history') {
-      if (!expId) return Response.json({ error: 'id is required.' }, { status: 400 });
-      if (!showId) return Response.json({ error: 'show_id is required.' }, { status: 400 });
-      let hist = [];
-      try { const raw = await kv(['HGET', HKEY, showId]); hist = raw ? JSON.parse(raw) : []; } catch { hist = []; }
-      if (!Array.isArray(hist)) hist = [];
-      const next = hist.filter((r) => String(r?.id ?? '') !== expId);
-      if (next.length) await kv(['HSET', HKEY, showId, JSON.stringify(next)]);
-      else await kv(['HDEL', HKEY, showId]);
-      return Response.json({ ok: true, id: expId, show_id: showId, removed: hist.length - next.length });
-    }
     // 'update' edits dates / note / verdict override on an existing claim.
     if (op === 'update') {
       if (!expId) return Response.json({ error: 'id is required.' }, { status: 400 });
