@@ -75,11 +75,13 @@ export default function ExperimentsTab() {
         <table className="data-table">
           <thead>
             <tr>
+              <th>Pickup date</th>
               <th>Show</th>
               <th>Metric</th>
               <th>POC</th>
               <th>Status at pickup</th>
               <th>Target</th>
+              <th>Action by</th>
               <th>Current</th>
               <th>Review date</th>
               <th>Remark</th>
@@ -96,6 +98,7 @@ export default function ExperimentsTab() {
                 return (
                   <tr key={claim.id || claim.show_id} className={'row-clickable' + rowTone}
                     onClick={() => s && openDeepDive(s.id)}>
+                    <td className="whitespace-nowrap">{claim.claimed_at ? fmtDate(claim.claimed_at) : <span className="text-slate-300">—</span>}</td>
                     <td>
                       <div className="font-medium">{s?.title || `#${claim.show_id}`}</div>
                       {s && (
@@ -114,6 +117,7 @@ export default function ExperimentsTab() {
                     </td>
                     <td>{trackedValueText(claim.target, claim.snapshot)}</td>
                     <td className="text-sm text-slate-600">{targetText(claim.target)}</td>
+                    <td className="whitespace-nowrap">{claim.action_date ? fmtDate(claim.action_date) : <span className="text-slate-300">—</span>}</td>
                     <td className="font-semibold">{cur ? trackedValueText(claim.target, cur) : '—'}</td>
                     <td>
                       {claim.review_date ? fmtDate(claim.review_date) : <span className="text-slate-300">—</span>}
@@ -128,7 +132,7 @@ export default function ExperimentsTab() {
               })
             ) : (
               <tr>
-                <td colSpan={9} className="text-center text-slate-400 py-6">
+                <td colSpan={11} className="text-center text-slate-400 py-6">
                   {rows.length ? 'No experiments for this POC.' : 'No running experiments. Pick one up in the Action Queue.'}
                 </td>
               </tr>
