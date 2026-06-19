@@ -25,6 +25,10 @@ export const useStore = create((set, get) => ({
   nse: {}, nseConfigured: false,
 
   tab: 'data',
+  // Navigation history (back/forward) — a stack of { tab, deepDiveId, deepLang }
+  // snapshots. navIndex points at the current entry; back/forward move within it.
+  navStack: [{ tab: 'data', deepDiveId: null, deepLang: '' }],
+  navIndex: 0,
   // metricBand/metricOp/metricX: Explorer-only label/SR threshold filter
   // (e.g. "L0 ≥ 40%" or "SR ≤ 70%"). Empty band/X = inactive.
   filters: { language: '', category: [], bu: '', status: '', action: '', agreement: '', manager: '', metricBand: '', metricOp: 'gte', metricX: '' },
@@ -49,14 +53,33 @@ export const useStore = create((set, get) => ({
   },
 
   // ---- UI setters ----
-  setTab: (tab) => set({ tab }),
+  // Record a navigation snapshot, truncating any forward history (browser-style).
+  _recordNav: (next) => set((st) => {
+    const trimmed = st.navStack.slice(0, st.navIndex + 1);
+    const last = trimmed[trimmed.length - 1];
+    if (last && last.tab === next.tab && last.deepDiveId === next.deepDiveId && last.deepLang === next.deepLang) return {};
+    const navStack = [...trimmed, next].slice(-50);
+    return { navStack, navIndex: navStack.length - 1 };
+  }),
+  setTab: (tab) => { set({ tab }); const s = get(); s._recordNav({ tab, deepDiveId: s.deepDiveId, deepLang: s.deepLang }); },
+  // Move within the nav history without recording new entries.
+  navBack: () => set((st) => {
+    if (st.navIndex <= 0) return {};
+    const i = st.navIndex - 1, e = st.navStack[i];
+    return { navIndex: i, tab: e.tab, deepDiveId: e.deepDiveId, deepLang: e.deepLang };
+  }),
+  navForward: () => set((st) => {
+    if (st.navIndex >= st.navStack.length - 1) return {};
+    const i = st.navIndex + 1, e = st.navStack[i];
+    return { navIndex: i, tab: e.tab, deepDiveId: e.deepDiveId, deepLang: e.deepLang };
+  }),
   setFilter: (key, value) => set((st) => ({ filters: { ...st.filters, [key]: value } })),
   resetFilters: () => set({ filters: { language: '', category: [], bu: '', status: '', action: '', agreement: '', manager: '', metricBand: '', metricOp: 'gte', metricX: '' }, search: '' }),
   setSearch: (search) => set({ search }),
   setSortBy: (sortBy) => set({ sortBy }),
   setDeepDiveId: (deepDiveId) => set({ deepDiveId }),
   setDeepLang: (deepLang) => set({ deepLang }),
-  openDeepDive: (id) => set({ deepDiveId: id, tab: 'deep' }),
+  openDeepDive: (id) => { set({ deepDiveId: id, tab: 'deep' }); const s = get(); s._recordNav({ tab: 'deep', deepDiveId: id, deepLang: s.deepLang }); },
   setAqFilter: (key, value) => set((st) => ({ aqFilters: { ...st.aqFilters, [key]: value } })),
   resetAqFilters: () => set({ aqFilters: { search: '', sortBy: 'overdue', language: '', status: '', bu: '', category: '', recommendation: '', reason: '', confidence: '', fixArea: '', manager: '' } }),
 
@@ -108,6 +131,9 @@ export const useStore = create((set, get) => ({
       if (au && au.rows) { patch.audRows = au.rows; patch.audMeta = au.meta; }
       if (re && re.rows) { patch.retRows = re.rows; patch.retMeta = re.meta; }
       patch.tab = patch.evalRows || patch.fatRows ? 'explorer' : 'data';
+      // Seed the nav history at the landing tab so back/forward start clean.
+      patch.navStack = [{ tab: patch.tab, deepDiveId: null, deepLang: '' }];
+      patch.navIndex = 0;
       set(patch);
       get().loadActions();
       get().loadNse();
