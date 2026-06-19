@@ -7,7 +7,7 @@ export default function Nav() {
   const setTab = useStore((s) => s.setTab);
   const hasData = useStore((s) => !!(s.evalRows || s.fatRows));
   return (
-    <nav className="ml-auto flex flex-wrap gap-1 justify-end">
+    <nav className="ml-auto flex flex-nowrap gap-0.5 justify-end">
       {TABS.map((t) => {
         const dis = t.gated && !hasData;
         return (
