@@ -104,7 +104,7 @@ export default function Page() {
           <NavHistoryButtons />
           <Logo />
           <div>
-            <div className="font-semibold leading-tight">Seekho Show Monitor</div>
+            <div className="font-semibold leading-tight">Seekho Show OS</div>
           </div>
           <Nav />
         </div>
