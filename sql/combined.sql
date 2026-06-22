@@ -1821,4 +1821,48 @@ GROUP BY show_id, ref_day
 ORDER BY show_id, ref_day
 ) t
 
+UNION ALL
+SELECT 'dau' AS dataset, TO_JSON_STRING(t) AS row_json FROM (
+-- Per-show DAILY paid DAU, last 7 displayed days (D-7 .. D-1 IST), with the
+-- trailing 7-calendar-day average. "paid" = users on/after their first paid
+-- order. Attributed to the series' parent show. Pulls D-13..D-1 so the 7d avg
+-- is fully formed on every displayed day.
+WITH dau_trials AS (
+  SELECT eo.profile_id, DATE(MIN(pph.purchased_on),'Asia/Kolkata') AS payment_date
+  FROM `seekho-c084b.seekho.experiments_order` eo
+  LEFT JOIN `seekho-c084b.seekho.experiments_profilepurchasehistory` pph ON eo.id = pph.order_id
+  WHERE LOWER(eo.status) = 'order_paid' AND eo.premium_item_id IS NULL AND eo.is_prod = TRUE
+    AND DATE(pph.purchased_on,'Asia/Kolkata') >= '2022-01-01'
+  GROUP BY 1
+),
+dau_base AS (
+  SELECT DATE(vp.timestamp,'Asia/Kolkata') AS date_, ser.show_id, vp.user_id, vp.watchtime_max
+  FROM `seekho-c084b.content_recommendation.video_play_combined` vp
+  JOIN dau_trials t ON t.profile_id = vp.user_id AND DATE(vp.timestamp,'Asia/Kolkata') >= t.payment_date
+  JOIN `seekho-c084b.seekho.courses_series` ser ON CAST(ser.id AS STRING) = vp.series_id
+  WHERE DATE(vp.timestamp,'Asia/Kolkata')
+        BETWEEN DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 13 DAY)
+            AND DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 1 DAY)
+    AND ser.language IN ('hi','ta','te','ml','kn','hi-jr')
+    AND ser.show_id IS NOT NULL
+),
+dau_show_daily AS (
+  SELECT date_, show_id, COUNT(DISTINCT user_id) AS paid_users, SUM(watchtime_max) AS watch_secs
+  FROM dau_base GROUP BY 1, 2
+),
+dau_rolled AS (
+  SELECT date_, show_id, paid_users,
+    ROUND(SAFE_DIVIDE(
+      SUM(paid_users) OVER (PARTITION BY show_id ORDER BY UNIX_DATE(date_) RANGE BETWEEN 6 PRECEDING AND CURRENT ROW),
+      7.0), 2) AS paid_users_7d_avg,
+    ROUND(SAFE_DIVIDE(watch_secs, 3600.0), 1) AS paid_watch_hours,
+    ROUND(SAFE_DIVIDE(watch_secs, 60.0 * paid_users), 2) AS paid_timespent_mins
+  FROM dau_show_daily
+)
+SELECT show_id, CAST(date_ AS STRING) AS date_, paid_users, paid_users_7d_avg, paid_watch_hours, paid_timespent_mins
+FROM dau_rolled
+WHERE date_ >= DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 7 DAY)
+ORDER BY show_id, date_
+) t
+
 ORDER BY dataset
