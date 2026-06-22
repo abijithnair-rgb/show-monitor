@@ -219,6 +219,12 @@ function DeepBody({ s, data }) {
         )}
       </div>
 
+      {data.dauRows && <DauCard dau={buildDauIndex(data.dauRows).get(s.id)} />}
+
+      {data.audRows && <AudienceCard aud={buildAudienceIndex(data.audRows).get(s.id)} />}
+
+      {data.retRows && <RetentionCard retRows={data.retRows} showId={s.id} language={s.language} data={data} />}
+
       <div className="card p-4 mb-4">
         <div className="font-semibold mb-2">Fatigue lens (Content Fatigue Monitor) — retention &amp; failure mode</div>
         {fs ? (
@@ -243,12 +249,6 @@ function DeepBody({ s, data }) {
           <div className="text-sm text-slate-400">No fatigue/episode data for this show.</div>
         )}
       </div>
-
-      {data.dauRows && <DauCard dau={buildDauIndex(data.dauRows).get(s.id)} />}
-
-      {data.audRows && <AudienceCard aud={buildAudienceIndex(data.audRows).get(s.id)} />}
-
-      {data.retRows && <RetentionCard retRows={data.retRows} showId={s.id} language={s.language} data={data} />}
 
       {fobj && fobj.eps && fobj.eps.length > 0 && <div dangerouslySetInnerHTML={{ __html: last10Table(fobj.eps) }} />}
 
