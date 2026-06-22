@@ -189,3 +189,51 @@ export function FailureDoughnut({ fs }) {
     />
   );
 }
+
+// Paid DAU per day (last 7 days) for one show — a solid line for daily paid DAU
+// with the trailing-7d average overlaid as a dashed reference line.
+export function DauChart({ dau }) {
+  const shortDate = (d) => { const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(d); return m ? `${m[2]}/${m[1]}` : d; };
+  return (
+    <Line
+      data={{
+        labels: dau.dates.map(shortDate),
+        datasets: [
+          {
+            label: 'Paid DAU',
+            data: dau.paidUsers,
+            borderColor: '#1d4ed8',
+            backgroundColor: 'rgba(29,78,216,.08)',
+            tension: 0.3,
+            fill: true,
+            pointRadius: 2,
+            pointHoverRadius: 4,
+            borderWidth: 2,
+          },
+          {
+            label: '7-day avg',
+            data: dau.paidUsers7dAvg,
+            borderColor: '#f59e0b',
+            backgroundColor: '#f59e0b',
+            borderDash: [5, 4],
+            tension: 0.3,
+            pointRadius: 0,
+            pointHoverRadius: 3,
+            borderWidth: 2,
+            fill: false,
+            spanGaps: true,
+          },
+        ],
+      }}
+      options={{
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { display: true, labels: { boxWidth: 10, font: { size: 10 } } } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 8, font: { size: 9 } } },
+          y: { beginAtZero: true, ticks: { precision: 0 } },
+        },
+        maintainAspectRatio: false,
+      }}
+    />
+  );
+}

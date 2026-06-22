@@ -1,12 +1,12 @@
 'use client';
 import { useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { buildModel, buildFatIndex, buildAudienceIndex, buildRetentionIndex, retentionLangMedian, RETENTION_STATES } from '@/lib/model';
+import { buildModel, buildFatIndex, buildAudienceIndex, buildRetentionIndex, buildDauIndex, retentionLangMedian, RETENTION_STATES } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
 import { ACTION_META } from '@/lib/constants';
 import { esc, fmtDate, LANG_NAMES, num } from '@/lib/format';
 import { actionChip, agreeBadge, kpiGrid, hdcCard, contribBar, last10Table } from '@/lib/render';
-import { TrajectoryChart, RetentionChart, FailureDoughnut, AudienceSourceChart, RetentionTrendChart } from '@/components/deepdive/charts';
+import { TrajectoryChart, RetentionChart, FailureDoughnut, AudienceSourceChart, RetentionTrendChart, DauChart } from '@/components/deepdive/charts';
 import PickupPanel from '@/components/PickupPanel';
 import { snapshotFromData, currentFor, metricLabel, VERDICT_META, canAssign, targetText, trackedValueText, evalVerdict } from '@/lib/ownership';
 
@@ -244,6 +244,8 @@ function DeepBody({ s, data }) {
         )}
       </div>
 
+      {data.dauRows && <DauCard dau={buildDauIndex(data.dauRows).get(s.id)} />}
+
       {data.audRows && <AudienceCard aud={buildAudienceIndex(data.audRows).get(s.id)} />}
 
       {data.retRows && <RetentionCard retRows={data.retRows} showId={s.id} language={s.language} data={data} />}
@@ -299,6 +301,26 @@ function HistCell({ k, v }) {
     <div className="rounded-md border border-slate-200 px-2 py-1.5">
       <div className="text-[11px] text-slate-500">{k}</div>
       <div className="text-sm font-semibold text-slate-700">{v || '—'}</div>
+    </div>
+  );
+}
+
+// Paid DAU for the show over the last 7 days.
+function DauCard({ dau }) {
+  const hasData = dau && dau.dates && dau.dates.length > 0;
+  return (
+    <div className="card p-4 mb-4">
+      <div className="font-semibold mb-2">Paid DAU — distinct paying users who watched this show (last 7 days)</div>
+      {hasData ? (
+        <>
+          <div style={{ position: 'relative', height: 240 }}>
+            <DauChart dau={dau} />
+          </div>
+          <div className="hint mt-1">Distinct paying users (post first-payment) who played any series of this show that day, attributed to the show. The dashed line is the trailing 7-calendar-day average.</div>
+        </>
+      ) : (
+        <div className="text-sm text-slate-400">No paid-DAU data for this show.</div>
+      )}
     </div>
   );
 }
