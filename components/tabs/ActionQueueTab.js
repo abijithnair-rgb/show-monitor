@@ -156,6 +156,27 @@ export default function ActionQueueTab() {
   //  • metric-driven reviews: L5-heavy reach (≥5/7 worst-band) OR success rate < 75%.
   // Inactive shows are already stopped, so they're excluded.
   const rows = useMemo(() => {
+    // Active-claim metrics per show — used to drop issues already being worked on.
+    // An issue leaves the queue once an experiment covering it is picked up; the
+    // moment that experiment is concluded (removed from `actions`) the issue
+    // re-derives from the data here and reappears if it still persists.
+    const claimMetrics = {};
+    for (const c of Object.values(actions || {})) {
+      const k = String(c.show_id);
+      (claimMetrics[k] || (claimMetrics[k] = new Set())).add(c.metric);
+    }
+    // Which experiment metric(s) "cover" each issue tag. 'Insufficient data' has
+    // no natural lever → covered by ANY active experiment on the show.
+    const coversTag = (tag, metrics) => {
+      if (!metrics || !metrics.size) return false;
+      if (tag === 'Success rate') return metrics.has('success_rate');
+      if (tag === 'L5 reach') return ['label', 'frequency', 'hook_fix', 'pace_fix', 'ending_fix'].some((m) => metrics.has(m));
+      if (tag === 'Stop') return metrics.has('stop');
+      if (tag === 'Promote') return metrics.has('promote');
+      if (tag === 'Insufficient data') return metrics.size > 0;
+      return false;
+    };
+
     return model
       .map((s) => {
         const l5 = hdcIdx ? l5Info(hdcIdx.get(s.id)) : null;
@@ -181,33 +202,38 @@ export default function ActionQueueTab() {
         const expDecision = isExp ? dispDecision(s.life.verdictRaw) : null;
         const isStop = !isExp && (s.life?.band === 'stop' || ['CONFIRMED_STOP', 'STOP_REVIEW'].includes(s.rec?.key));
 
-        // Metric review reasons (drive the REVIEW_ACT bucket / why text).
-        const reasons = [];
-        if (l5) reasons.push(`trending L5 (${l5.l5}/${l5.supply} of this week ≈${l5.pct}% in the worst view band — review reach/discovery)`);
-        if (srLow) reasons.push(`success rate ${srLow.pct}% (${srLow.pass}/${srLow.n}) below ${SR_REVIEW_BELOW}% — review content quality`);
+        // Build this show's ISSUES. Each = { tag, bucket, text } where bucket is
+        // the queue lane (STOP/PROMOTE/REVIEW_ACT/REVIEW).
+        const issues = [];
+        if (isExp && expDecision === 'STOP') issues.push({ tag: 'Stop', bucket: 'STOP', text: whyText(s, 'STOP') });
+        else if (isExp && expDecision === 'PROMOTE') issues.push({ tag: 'Promote', bucket: 'PROMOTE', text: whyText(s, 'PROMOTE') });
+        else if (isExp && expDecision === 'REVIEW') issues.push({ tag: 'Insufficient data', bucket: 'REVIEW', text: whyText(s, 'REVIEW') });
+        else if (isStop) issues.push({ tag: 'Stop', bucket: 'STOP', text: s.rec?.detail || ev.decision_reason || whyText(s, 'STOP') });
+        if (l5) issues.push({ tag: 'L5 reach', bucket: 'REVIEW_ACT', text: `trending L5 (${l5.l5}/${l5.supply} of this week ≈${l5.pct}% in the worst view band — review reach/discovery)` });
+        if (srLow) issues.push({ tag: 'Success rate', bucket: 'REVIEW_ACT', text: `success rate ${srLow.pct}% (${srLow.pass}/${srLow.n}) below ${SR_REVIEW_BELOW}% — review content quality` });
 
-        // Decide the bucket; CONTINUE-only experiments with no reasons are dropped.
-        let decision;
-        if (isExp && expDecision !== 'CONTINUE') decision = expDecision; // STOP / PROMOTE / REVIEW
-        else if (isStop) decision = 'STOP';
-        else if (reasons.length) decision = 'REVIEW_ACT';
-        else return null; // exp CONTINUE (or healthy) with no review reason → not in queue
+        if (!issues.length) return null; // healthy / exp CONTINUE with no review reason
 
+        // Drop issues already covered by an active experiment. If every issue is
+        // covered, the show leaves the queue entirely (it's being worked on; track
+        // it in Experiments). Otherwise keep only the OPEN issues.
+        const metrics = claimMetrics[String(s.id)];
+        const open = issues.filter((i) => !coversTag(i.tag, metrics));
+        if (!open.length) return null;
+
+        // Highest-priority open lane drives the row's bucket + recommendation.
+        const order = ['STOP', 'PROMOTE', 'REVIEW_ACT', 'REVIEW'];
+        const decision = order.find((b) => open.some((i) => i.bucket === b));
+        const reasonTags = [...new Set(open.map((i) => i.tag))];
+
+        const actReasons = open.filter((i) => i.bucket === 'REVIEW_ACT').map((i) => i.text);
         let why;
         if (decision === 'REVIEW_ACT') {
-          why = 'Review & take action: ' + reasons.join('; ') + '.';
+          why = 'Review & take action: ' + actReasons.join('; ') + '.';
         } else {
-          why = isExp ? whyText(s, decision) : (s.rec?.detail || ev.decision_reason || whyText(s, 'STOP'));
-          if (reasons.length) why = `${why} · Also: ${reasons.join('; ')}.`;
+          why = (open.find((i) => i.bucket === decision) || {}).text || '';
+          if (actReasons.length) why = `${why} · Also: ${actReasons.join('; ')}.`;
         }
-
-        // Pinpoint reason TAGS (separate column + filter). Every row gets ≥1.
-        const reasonTags = [];
-        if (srLow) reasonTags.push('Success rate');
-        if (l5) reasonTags.push('L5 reach');
-        if (decision === 'STOP') reasonTags.push('Stop');
-        if (decision === 'PROMOTE') reasonTags.push('Promote');
-        if (decision === 'REVIEW') reasonTags.push('Insufficient data');
 
         return {
           s,
@@ -222,7 +248,7 @@ export default function ActionQueueTab() {
         };
       })
       .filter(Boolean);
-  }, [model, hdcIdx, fatIdx, data.fatRows]);
+  }, [model, hdcIdx, fatIdx, data.fatRows, actions]);
 
   // New-show experiments that have landed on a stop/promote verdict become queue
   // candidates too. The effective verdict already folds in Deepak's override, so
@@ -431,12 +457,14 @@ export default function ActionQueueTab() {
               filtered.map((r) => {
                 const showClaims = claimsByShow[String(r.s.id)] || [];
                 const claim = showClaims[0] || null; // primary (oldest) experiment
-                const moreCount = Math.max(0, showClaims.length - 1);
-                const snapNow = claim ? currentFor(claim, r.s, data, hdcIdx, fatIdx) : metricSnapshot(r.s, hdcIdx, fatIdx, data.fatRows);
-                const verdict = claim ? evalVerdict(claim, snapNow) : null;
-                const vMeta = verdict ? VERDICT_META[verdict] : null;
+                // Pickup from the queue always starts a FRESH experiment for the
+                // open issue (claimId null), so a second issue can be picked up
+                // while another experiment is already running on the same show.
+                const snapNow = metricSnapshot(r.s, hdcIdx, fatIdx, data.fatRows);
+                const verdict = claim ? evalVerdict(claim, currentFor(claim, r.s, data, hdcIdx, fatIdx)) : null;
                 const due = reviewDue(claim);
                 const attn = claim && (due || verdict !== 'tracking');
+                const owners = [...new Set(showClaims.map((c) => c.by).filter(Boolean))];
                 const isExpanded = expanded.id === r.s.id;
                 const colCount = actionsConfigured ? 10 : 9;
                 const openPanel = (e, asAssign) => { e.stopPropagation(); setExpanded((v) => (v.id === r.s.id && v.assign === asAssign ? { id: null, assign: false } : { id: r.s.id, assign: asAssign })); };
@@ -469,27 +497,16 @@ export default function ActionQueueTab() {
                   </td>
                   {actionsConfigured && (
                     <td onClick={(e) => e.stopPropagation()}>
-                      {claim ? (
-                        <button className="text-left text-xs hover:opacity-80" onClick={(e) => openPanel(e, false)}>
-                          <div className="flex items-center gap-1 flex-wrap">
-                            {vMeta && <span className={'chip ' + vMeta.chip}>{vMeta.label}</span>}
-                            <span className="font-medium text-slate-700">{claim.by}</span>
-                            <span className="chip chip-purple">{metricLabel(claim.metric)}</span>
-                            {due && verdict === 'tracking' && <span className="chip chip-red">review due</span>}
-                          </div>
-                          <div className="hint mt-0.5">
-                            picked up {timeAgo(claim.claimed_at)}
-                            {claim.review_date ? ` · review ${fmtDate(claim.review_date)}` : ''}
-                            {moreCount > 0 ? ` · ＋${moreCount} more · manage in Deep Dive` : ''}
-                            {' '}{isExpanded ? '▾' : '▸'}
-                          </div>
-                        </button>
-                      ) : (
-                        <div className="flex gap-2">
-                          <button className="btn btn-ghost text-xs" onClick={(e) => openPanel(e, false)}>{isExpanded && !expanded.assign ? 'Cancel' : 'Pick up'}</button>
-                          {iCanAssign && <button className="btn btn-ghost text-xs" onClick={(e) => openPanel(e, true)}>{isExpanded && expanded.assign ? 'Cancel' : 'Assign'}</button>}
+                      {showClaims.length > 0 && (
+                        <div className="hint mb-1">
+                          {showClaims.length} active {showClaims.length === 1 ? 'experiment' : 'experiments'}
+                          {owners.length ? ` · ${owners.join(', ')}` : ''} · manage in Deep Dive
                         </div>
                       )}
+                      <div className="flex gap-2">
+                        <button className="btn btn-ghost text-xs" onClick={(e) => openPanel(e, false)}>{isExpanded && !expanded.assign ? 'Cancel' : 'Pick up'}</button>
+                        {iCanAssign && <button className="btn btn-ghost text-xs" onClick={(e) => openPanel(e, true)}>{isExpanded && expanded.assign ? 'Cancel' : 'Assign'}</button>}
+                      </div>
                     </td>
                   )}
                   <td><FixCell mode={r.s.fat?.mode} /></td>
@@ -499,7 +516,7 @@ export default function ActionQueueTab() {
                 {actionsConfigured && isExpanded && (
                   <tr>
                     <td colSpan={colCount} className="p-2 bg-white">
-                      <PickupPanel s={r.s} snapshotNow={snapNow} assign={expanded.assign} claimId={claim?.id || null} defaultMetric={defaultMetricForReasons(r.reasonTags)} onClose={() => setExpanded({ id: null, assign: false })} />
+                      <PickupPanel s={r.s} snapshotNow={snapNow} assign={expanded.assign} claimId={null} defaultMetric={defaultMetricForReasons(r.reasonTags)} onClose={() => setExpanded({ id: null, assign: false })} />
                     </td>
                   </tr>
                 )}
