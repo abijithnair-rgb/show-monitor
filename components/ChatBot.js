@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildContext } from '@/lib/buildContext';
 
-const BOT_NAME = 'Seekho Show Master';
+const BOT_NAME = 'Show Master';
 const TAGLINE = 'Lifecycle × fatigue, reconciled.';
 
 // First-touch quick picks help the bot scope to the user's slice.

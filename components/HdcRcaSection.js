@@ -53,9 +53,10 @@ export default function HdcRcaSection({ title, blurb, rows, showBU = false, defa
     [seriesRows, curSel, priSel]
   );
 
-  // collapsed-header summary chip: L0 D-2 → D-3
+  // collapsed-header summary chip: L0 chronological D-3 → D-2 (matches the
+  // executive report's "L0 fell 6→4" ordering, oldest → newest).
   const summary = rca
-    ? `L0 ${rca.hCurrent.l0}→${rca.hPrior.l0}`
+    ? `L0 ${rca.hPrior.l0}→${rca.hCurrent.l0}`
     : `${seriesRows.length} series`;
   const l0Delta = rca ? rca.hCurrent.l0 - rca.hPrior.l0 : 0;
 

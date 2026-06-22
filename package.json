@@ -2,7 +2,7 @@
   "name": "show-intelligence",
   "version": "1.0.0",
   "private": true,
-  "description": "Seekho Show OS — unified lifecycle (NSE) × fatigue verdict explorer",
+  "description": "Show Monitor — unified lifecycle (NSE) × fatigue verdict explorer",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
