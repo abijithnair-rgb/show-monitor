@@ -328,21 +328,13 @@ export default function ActionQueueTab() {
   }, [actions]);
 
   const launchT = (r) => (r.launch ? new Date(r.launch).getTime() || Infinity : Infinity);
-  // A show "needs attention" when ANY of its experiments is review-due OR has been
-  // auto-judged reached/failed — those float to the very top, regardless of sort.
-  const attnOf = (r) => {
-    const cs = claimsByShow[String(r.s.id)];
-    if (!cs || !cs.length) return false;
-    return cs.some((claim) => reviewDue(claim) || evalVerdict(claim, currentFor(claim, r.s, data, hdcIdx, fatIdx)) !== 'tracking');
-  };
+  // Rank purely by the chosen sort — the queue does NOT reorder by the result of
+  // any experiment already running on a show.
   filtered = [...filtered].sort((a, b) => {
-    const da = attnOf(a), db = attnOf(b);
-    if (da !== db) return da ? -1 : 1;
     if (sortBy === 'recent') return launchT(b) - launchT(a);
     if (sortBy === 'recommendation') return (a.decision === 'STOP' ? 0 : 1) - (b.decision === 'STOP' ? 0 : 1) || launchT(a) - launchT(b);
     return launchT(a) - launchT(b); // overdue: oldest launch first
   });
-  const dueCount = filtered.filter(attnOf).length;
 
   const clearFilters = () => resetAqFilters();
 
@@ -373,7 +365,6 @@ export default function ActionQueueTab() {
       </div>
       <p className="text-sm text-slate-500 mb-3">Experiments, stop candidates & shows trending at the L5 label — needing a decision.{actionsConfigured ? " Pick up an action to set review dates and let the team know you're on it." : ''}</p>
       {!actionsConfigured && <p className="hint mb-3">Shared "pick up" is not configured on the server — actions are view-only here. (Link a Vercel KV store to enable team ownership.)</p>}
-      {actionsConfigured && dueCount > 0 && <div className="banner banner-red text-[12px] mb-3"><span>⏰ {dueCount} picked-up {dueCount === 1 ? 'experiment needs' : 'experiments need'} attention (review due, or target reached/failed) — shown at the top.</span></div>}
 
       <div className="card p-4 mb-4">
         <div className="flex gap-2 mb-3 flex-wrap">
@@ -455,21 +446,17 @@ export default function ActionQueueTab() {
             {filtered.length ? (
               filtered.map((r) => {
                 const showClaims = claimsByShow[String(r.s.id)] || [];
-                const claim = showClaims[0] || null; // primary (oldest) experiment
                 // Pickup from the queue always starts a FRESH experiment for the
                 // open issue (claimId null), so a second issue can be picked up
                 // while another experiment is already running on the same show.
                 const snapNow = metricSnapshot(r.s, hdcIdx, fatIdx, data.fatRows);
-                const verdict = claim ? evalVerdict(claim, currentFor(claim, r.s, data, hdcIdx, fatIdx)) : null;
-                const due = reviewDue(claim);
-                const attn = claim && (due || verdict !== 'tracking');
                 const owners = [...new Set(showClaims.map((c) => c.by).filter(Boolean))];
                 const isExpanded = expanded.id === r.s.id;
                 const colCount = actionsConfigured ? 10 : 8;
                 const openPanel = (e, asAssign) => { e.stopPropagation(); setExpanded((v) => (v.id === r.s.id && v.assign === asAssign ? { id: null, assign: false } : { id: r.s.id, assign: asAssign })); };
                 return (
                 <Fragment key={r.s.id}>
-                <tr className={'row-clickable' + (attn ? ' bg-red-50' : '')} onClick={() => openDeepDive(r.s.id)}>
+                <tr className="row-clickable" onClick={() => openDeepDive(r.s.id)}>
                   <td>
                     <div className="font-medium">{r.s.title || '—'}</div>
                     <div className="mt-1 flex gap-1 flex-wrap">
