@@ -343,8 +343,14 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
               {verdict !== 'reached' && <button className="text-emerald-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => override('reached')}>Mark reached</button>}
               {verdict !== 'failed' && <button className="text-red-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => override('failed')}>Mark failed</button>}
               {claim.verdict_override && <button className="text-slate-500 hover:underline disabled:opacity-50" disabled={busy} onClick={() => override(null)}>Clear override</button>}
-              <span className="text-slate-300">·</span>
-              <button className="text-slate-700 font-medium hover:underline disabled:opacity-50" disabled={busy} onClick={() => setConcluding(true)}>Conclude → save to history</button>
+              {/* Conclude is only offered once the experiment is decided
+                  (reached/failed) or its review date has arrived. */}
+              {(verdict !== 'tracking' || due) && (
+                <>
+                  <span className="text-slate-300">·</span>
+                  <button className="text-slate-700 font-medium hover:underline disabled:opacity-50" disabled={busy} onClick={() => setConcluding(true)}>Conclude → save to history</button>
+                </>
+              )}
               <button className="text-slate-400 hover:text-slate-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => run(() => releaseShow(claim.id))}>Discard</button>
             </div>
           )}
