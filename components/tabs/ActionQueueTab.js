@@ -432,7 +432,6 @@ export default function ActionQueueTab() {
           <Dd label="RECOMMENDATION" value={recommendation} set={setRecommendation} options={DECISION_ORDER} fmt={(d) => DECISION_LABELS[d] || d} allLabel="All recommendations" />
           <Dd label="REASON" value={reason} set={setReason} options={reasonsList} allLabel="All reasons" />
           {managers.length > 0 && <Dd label="SHOW MANAGER" value={manager} set={setManager} options={managers} allLabel="All managers" />}
-          <Dd label="CONFIDENCE" value={confidence} set={setConfidence} options={['high', 'medium', 'low']} allLabel="All confidence" />
         </div>
       </div>
 
@@ -449,7 +448,7 @@ export default function ActionQueueTab() {
               {actionsConfigured && <th>Owner / status</th>}
               <th>Fix area</th>
               <th>Trajectory</th>
-              <th>Confidence</th>
+              {actionsConfigured && <th>Active experiments</th>}
             </tr>
           </thead>
           <tbody>
@@ -466,7 +465,7 @@ export default function ActionQueueTab() {
                 const attn = claim && (due || verdict !== 'tracking');
                 const owners = [...new Set(showClaims.map((c) => c.by).filter(Boolean))];
                 const isExpanded = expanded.id === r.s.id;
-                const colCount = actionsConfigured ? 10 : 9;
+                const colCount = actionsConfigured ? 10 : 8;
                 const openPanel = (e, asAssign) => { e.stopPropagation(); setExpanded((v) => (v.id === r.s.id && v.assign === asAssign ? { id: null, assign: false } : { id: r.s.id, assign: asAssign })); };
                 return (
                 <Fragment key={r.s.id}>
@@ -497,11 +496,6 @@ export default function ActionQueueTab() {
                   </td>
                   {actionsConfigured && (
                     <td onClick={(e) => e.stopPropagation()}>
-                      {showClaims.length > 0 && (
-                        <div className="hint mb-1" title={owners.length ? `${owners.join(', ')} · manage in Deep Dive` : 'manage in Deep Dive'}>
-                          {showClaims.length} active {showClaims.length === 1 ? 'experiment' : 'experiments'}
-                        </div>
-                      )}
                       <div className="flex gap-2">
                         <button className="btn btn-ghost text-xs" onClick={(e) => openPanel(e, false)}>{isExpanded && !expanded.assign ? 'Cancel' : 'Pick up'}</button>
                         {iCanAssign && <button className="btn btn-ghost text-xs" onClick={(e) => openPanel(e, true)}>{isExpanded && expanded.assign ? 'Cancel' : 'Assign'}</button>}
@@ -510,7 +504,13 @@ export default function ActionQueueTab() {
                   )}
                   <td><FixCell mode={r.s.fat?.mode} /></td>
                   <td><TrajectoryCell value={r.trajectory} /></td>
-                  <td><ConfidenceChip value={r.confidence} /></td>
+                  {actionsConfigured && (
+                    <td>
+                      {showClaims.length > 0
+                        ? <span className="font-medium text-slate-700" title={owners.length ? `${owners.join(', ')} · manage in Deep Dive` : 'manage in Deep Dive'}>{showClaims.length}</span>
+                        : <span className="text-slate-300">0</span>}
+                    </td>
+                  )}
                 </tr>
                 {actionsConfigured && isExpanded && (
                   <tr>
@@ -524,7 +524,7 @@ export default function ActionQueueTab() {
               })
             ) : (
               <tr>
-                <td colSpan={actionsConfigured ? 10 : 9} className="text-center text-slate-400 py-6">No shows need a decision right now. ✓</td>
+                <td colSpan={actionsConfigured ? 10 : 8} className="text-center text-slate-400 py-6">No shows need a decision right now. ✓</td>
               </tr>
             )}
           </tbody>
