@@ -498,9 +498,8 @@ export default function ActionQueueTab() {
                   {actionsConfigured && (
                     <td onClick={(e) => e.stopPropagation()}>
                       {showClaims.length > 0 && (
-                        <div className="hint mb-1">
+                        <div className="hint mb-1" title={owners.length ? `${owners.join(', ')} · manage in Deep Dive` : 'manage in Deep Dive'}>
                           {showClaims.length} active {showClaims.length === 1 ? 'experiment' : 'experiments'}
-                          {owners.length ? ` · ${owners.join(', ')}` : ''} · manage in Deep Dive
                         </div>
                       )}
                       <div className="flex gap-2">
