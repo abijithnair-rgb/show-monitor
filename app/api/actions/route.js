@@ -127,6 +127,12 @@ export async function POST(req) {
   };
 
   const validOverride = (v) => (v === 'reached' || v === 'failed' ? v : null);
+  // Experiment constraints: { metric, op:gte|lte, value≥0 }. metric ∈ supply |
+  // success_rate | L0..L5. Filtered + normalised; invalid entries dropped.
+  const CONSTRAINT_METRICS = new Set(['supply', 'success_rate', 'L0', 'L1', 'L2', 'L3', 'L4', 'L5']);
+  const cleanConstraints = (arr) => (Array.isArray(arr) ? arr : [])
+    .filter((c) => c && CONSTRAINT_METRICS.has(c.metric) && (c.op === 'gte' || c.op === 'lte') && Number.isFinite(Number(c.value)) && Number(c.value) >= 0)
+    .map((c) => ({ metric: c.metric, op: c.op, value: Math.max(0, Math.round(Number(c.value))) }));
   const getPrev = async () => { try { const raw = await kv(['HGET', KEY, expId]); return raw ? JSON.parse(raw) : null; } catch { return null; } };
 
   try {
@@ -204,6 +210,7 @@ export async function POST(req) {
         review_date: dateOrNull(body?.review_date),
         note: body?.note != null ? String(body.note) : '',
         snapshot: body?.snapshot || null,
+        constraints: cleanConstraints(body?.constraints),
         verdict_override: null,
       };
       await kv(['HSET', KEY, id, JSON.stringify(claim)]);

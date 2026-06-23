@@ -11,7 +11,9 @@ import {
   makeGroupTarget, defaultGroupOp, groupTargetText, groupMetricKeyOfTarget,
   groupCurrentFor, groupEvalVerdict, GROUP_VERDICT_META,
   groupTrackedValueText, groupProgressLine, reviewDue,
+  cleanConstraints, evalGroupConstraints,
 } from '@/lib/groupExperiments';
+import { ConstraintEditor, ConstraintChips } from '@/components/ConstraintControls';
 
 // Max review date = today + EXPERIMENT_MAX_DAYS (HDC data window), as YYYY-MM-DD.
 function maxReviewStr() {
@@ -42,6 +44,7 @@ function GroupPickupForm({ scope, scopeValue, metricKey, snapshot, onClose, onSa
   });
   const [actionDate, setActionDate] = useState('');
   const [reviewDate, setReviewDate] = useState('');
+  const [constraints, setConstraints] = useState([]);
   const [remark, setRemark] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -55,6 +58,7 @@ function GroupPickupForm({ scope, scopeValue, metricKey, snapshot, onClose, onSa
     setErr(null); setBusy(true);
     claimGroupExp(scope, scopeValue, who, snapshot, {
       metric: metricKey, target,
+      constraints: cleanConstraints(constraints),
       note: remark.trim() || null,
       action_date: actionDate || null, review_date: reviewDate || null,
     })
@@ -118,6 +122,11 @@ function GroupPickupForm({ scope, scopeValue, metricKey, snapshot, onClose, onSa
         {m?.kind === 'sr'
           ? `Success rate (settled videos only) across all ${snapshot.shows} shows in this ${scopeMetaLabel(scope).toLowerCase()}, measured on videos posted between the "actions to be taken by" date and the review date.`
           : `Counts the ${m?.kind === 'supply' ? 'videos' : m?.band + ' videos'} this ${scopeMetaLabel(scope).toLowerCase()} publishes between the "actions to be taken by" date and the review date (cumulative across every show).`}
+      </div>
+
+      <div className="text-xs text-slate-500 flex flex-col gap-1 mt-3">
+        Constraints to maintain <span className="hint">(optional — warning-only; don't change the verdict)</span>
+        <ConstraintEditor rows={constraints} onChange={setConstraints} />
       </div>
 
       <label className="text-xs text-slate-500 flex flex-col gap-1 mt-3">
@@ -311,7 +320,8 @@ export default function GroupExperimentsTable() {
         const sh = scopeShows(model, claim.scope, claim.scope_value);
         const cur = groupCurrentFor(claim, sh, data);
         const verdict = groupEvalVerdict(claim, cur);
-        return { claim, cur, verdict };
+        const constraints = claim.constraints?.length ? evalGroupConstraints(claim, sh, data) : [];
+        return { claim, cur, verdict, constraints };
       })
       .sort((a, b) => {
         const aAttn = a.verdict !== 'tracking' || reviewDue(a.claim);
@@ -353,7 +363,7 @@ export default function GroupExperimentsTable() {
               </tr>
             </thead>
             <tbody>
-              {rows.map(({ claim, cur, verdict }) => {
+              {rows.map(({ claim, cur, verdict, constraints }) => {
                 const vm = GROUP_VERDICT_META[verdict] || GROUP_VERDICT_META.tracking;
                 const due = reviewDue(claim) && verdict === 'tracking';
                 const tone = verdict === 'reached' ? ' bg-green-50' : (verdict === 'failed' || due) ? ' bg-red-50' : '';
@@ -374,7 +384,10 @@ export default function GroupExperimentsTable() {
                     <td>{pickVal != null ? fmtVal(mKey, pickVal) : <span className="text-slate-300">—</span>}</td>
                     <td className="text-sm text-slate-600">{groupTargetText(claim.target)}</td>
                     <td className="whitespace-nowrap">{claim.action_date ? fmtDate(claim.action_date) : <span className="text-slate-300">—</span>}</td>
-                    <td className="font-semibold" title={groupProgressLine(claim, cur) || ''}>{groupTrackedValueText(claim.target, cur)}</td>
+                    <td className="font-semibold" title={groupProgressLine(claim, cur) || ''}>
+                      {groupTrackedValueText(claim.target, cur)}
+                      {constraints?.length > 0 && <ConstraintChips evaluated={constraints} />}
+                    </td>
                     <td>
                       {claim.review_date ? fmtDate(claim.review_date) : <span className="text-slate-300">—</span>}
                       {due && <div className="hint" style={{ color: '#991b1b' }}>due</div>}

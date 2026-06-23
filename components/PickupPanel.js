@@ -7,7 +7,9 @@ import {
   evalVerdict, VERDICT_META, progressLine, sincePickupParts,
   LABEL_BANDS, LABEL_MAX, EXPERIMENT_MAX_DAYS, labelDefaultOp, makeLabelTarget, makeFrequencyTarget, FREQ_MIN, FREQ_MAX, impliedTarget,
   targetText, trackedValueText, POCS, canManageClaim,
+  cleanConstraints, evalConstraints,
 } from '@/lib/ownership';
+import { ConstraintEditor, ConstraintChips } from '@/components/ConstraintControls';
 
 // Hoisted (stable identity so inputs don't remount on keystroke).
 function Numbers({ title, snap }) {
@@ -59,6 +61,7 @@ function DateField({ label, value, set, readOnly, max }) {
 //                    users who canAssign().
 export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false, assign = false, claimId = null, defaultMetric = '' }) {
   const claim = useStore((st) => (claimId ? st.actions[String(claimId)] : null));
+  const data = useStore((st) => st.data());
   const userName = useStore((st) => st.userName);
   const setUserName = useStore((st) => st.setUserName);
   const claimShow = useStore((st) => st.claimShow);
@@ -77,6 +80,7 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
   const [labelN, setLabelN] = useState(1);
   const [freqOp, setFreqOp] = useState('gte');     // 'gte' = up to, 'lte' = down to
   const [freqN, setFreqN] = useState(3);
+  const [constraints, setConstraints] = useState([]); // [{ metric, op, value }]
   const [remark, setRemark] = useState('');
   const [actionDate, setActionDate] = useState(claim?.action_date || '');
   const [reviewDate, setReviewDate] = useState(claim?.review_date || '');
@@ -136,6 +140,7 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
     run(async () => {
       await claimShow(s.id, owner, snapshotNow, {
         metric, target,
+        constraints: cleanConstraints(constraints),
         assigned_by: assign ? userName : null,
         note: remark.trim() || null,
         action_date: actionDate || null, review_date: reviewDate || null,
@@ -161,6 +166,9 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
       <div className="text-xs text-slate-600">
         {progressLine(claim, snapshotNow) || 'Manual action — no auto-tracked target.'}
       </div>
+      {claim.constraints?.length > 0 && (
+        <ConstraintChips evaluated={evalConstraints(claim, s, data)} />
+      )}
       {claim.note && <div className="text-xs text-slate-500">Remark: {claim.note}</div>}
       <div className="hint">
         picked up {fmtDate(claim.claimed_at)} ({timeAgo(claim.claimed_at)})
@@ -300,6 +308,10 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
             {(metric === 'hook_fix' || metric === 'pace_fix' || metric === 'ending_fix') && (
               <div className="hint">Reached when the show's drop-off is healthy (no dominant failure mode) by the review date — fixing the {metric.replace('_fix', '')} issue so nothing else is failing. Otherwise failed.</div>
             )}
+            <div className="text-xs text-slate-500 flex flex-col gap-1">
+              Constraints to maintain <span className="hint">(optional — warning-only; don't change the verdict)</span>
+              <ConstraintEditor rows={constraints} onChange={setConstraints} />
+            </div>
             <label className="text-xs text-slate-500 flex flex-col gap-1">
               Remark
               <textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2}

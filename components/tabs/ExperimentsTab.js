@@ -5,9 +5,10 @@ import { buildModel, buildFatIndex } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
 import {
   currentFor, metricLabel, targetText, trackedValueText,
-  evalVerdict, VERDICT_META, reviewDue,
+  evalVerdict, VERDICT_META, reviewDue, evalConstraints,
 } from '@/lib/ownership';
 import { fmtDate, LANG_NAMES } from '@/lib/format';
+import { ConstraintChips } from '@/components/ConstraintControls';
 import GroupExperimentsTable, { AddGroupExperimentModal } from '@/components/GroupExperiments';
 
 // Currently running experiments — one row per active claim (the `actions` map).
@@ -130,7 +131,10 @@ export default function ExperimentsTab() {
                     <td>{trackedValueText(claim.target, claim.snapshot)}</td>
                     <td className="text-sm text-slate-600">{targetText(claim.target)}</td>
                     <td className="whitespace-nowrap">{claim.action_date ? fmtDate(claim.action_date) : <span className="text-slate-300">—</span>}</td>
-                    <td className="font-semibold">{cur ? trackedValueText(claim.target, cur) : '—'}</td>
+                    <td className="font-semibold">
+                      {cur ? trackedValueText(claim.target, cur) : '—'}
+                      {s && claim.constraints?.length > 0 && <ConstraintChips evaluated={evalConstraints(claim, s, data)} />}
+                    </td>
                     <td>
                       {claim.review_date ? fmtDate(claim.review_date) : <span className="text-slate-300">—</span>}
                       {due && <div className="hint" style={{ color: '#991b1b' }}>due</div>}
