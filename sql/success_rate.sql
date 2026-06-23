@@ -15,7 +15,7 @@ WITH active_shows AS (
   WHERE show_type = 'active' AND state = 'live'
 ),
 c AS (
-  SELECT cs.language, cp.series_id, cp.status
+  SELECT cs.show_id, cs.language, cp.series_id, cp.status
   FROM `seekho-c084b.analytics_content.content_performance` cp
   JOIN `seekho-c084b.seekho.courses_series` cs ON cs.id = cp.series_id
   WHERE cp.publish_date BETWEEN DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 10 DAY)
@@ -24,14 +24,17 @@ c AS (
     AND cs.show_id IN (SELECT show_id FROM active_shows)
     AND (cs.state = 'live' OR cs.state = 'expired')
 )
+-- Per-show grain (matches the COMBINED 'langsr' dataset). Roll up to language /
+-- BU / POC by summing successful & failed across the relevant shows.
 SELECT
-  language,
-  COUNT(DISTINCT series_id)                                  AS series,
-  COUNT(DISTINCT IF(status = 1, series_id, NULL))            AS successful,
-  COUNT(DISTINCT IF(status = 0, series_id, NULL))            AS failed
+  show_id,
+  ANY_VALUE(language)                              AS language,
+  COUNT(DISTINCT series_id)                        AS series,
+  COUNT(DISTINCT IF(status = 1, series_id, NULL))  AS successful,
+  COUNT(DISTINCT IF(status = 0, series_id, NULL))  AS failed
 FROM c
-GROUP BY 1
-ORDER BY language;
+GROUP BY show_id
+ORDER BY show_id;
 
 -- =====================================================================
 -- Ad-hoc parameterised version (Redash date picker) — overall + per language.

@@ -1867,16 +1867,19 @@ ORDER BY show_id, date_
 
 UNION ALL
 SELECT 'langsr' AS dataset, TO_JSON_STRING(t) AS row_json FROM (
--- LANGUAGE-LEVEL SUCCESS RATE over settled series published in [today-10 .. today-4],
--- for active & live shows. SR = successful ÷ (successful+failed) on DISTINCT series.
--- status from content_performance (1=success, 0=failed; NULL excluded).
+-- PER-SHOW SUCCESS RATE over settled series published in [today-10 .. today-4],
+-- for active & live shows. SR = successful ÷ (successful+failed) on DISTINCT
+-- series. status from content_performance (1=success, 0=failed; NULL excluded).
+-- Emitted per show_id (with language) so the dashboard can roll it up to ANY
+-- scope — language / BU / POC — by summing successful & failed across the
+-- scope's shows, matching the source-of-truth SR query exactly at every level.
 WITH sr_active_shows AS (
   SELECT DISTINCT id AS show_id
   FROM `seekho-c084b.seekho.courses_show`
   WHERE show_type = 'active' AND state = 'live'
 ),
 sr_c AS (
-  SELECT cs.language, cp.series_id, cp.status
+  SELECT cs.show_id, cs.language, cp.series_id, cp.status
   FROM `seekho-c084b.analytics_content.content_performance` cp
   JOIN `seekho-c084b.seekho.courses_series` cs ON cs.id = cp.series_id
   WHERE cp.publish_date BETWEEN DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 10 DAY)
@@ -1886,13 +1889,14 @@ sr_c AS (
     AND (cs.state = 'live' OR cs.state = 'expired')
 )
 SELECT
-  language,
+  show_id,
+  ANY_VALUE(language)                             AS language,
   COUNT(DISTINCT series_id)                       AS series,
   COUNT(DISTINCT IF(status = 1, series_id, NULL)) AS successful,
   COUNT(DISTINCT IF(status = 0, series_id, NULL)) AS failed
 FROM sr_c
-GROUP BY 1
-ORDER BY language
+GROUP BY show_id
+ORDER BY show_id
 ) t
 
 ORDER BY dataset
