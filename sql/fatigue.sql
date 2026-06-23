@@ -197,14 +197,28 @@ video_failure_mode AS (
 --   • targ_comp is a per-video property (depends on duration); it doesn't
 --     vary across snapshot rows for the same video, so MAX returns the
 --     value (NULL-aware: MAX ignores NULLs).
---   • status: MAX(1, 0, NULL) = 1 — picks the most positive flag.
+--   • status: take the LATEST snapshot's flag per series (freshest computed_at),
+--     NOT MAX(status). MAX(1, 0, NULL) = 1 counted a video as successful if it
+--     was EVER flagged success in ANY snapshot, even after the latest snapshot
+--     downgraded it to 0 — this systematically inflated the success rate. The
+--     freshest snapshot carries the video's true current status (NULL = not yet
+--     evaluated, which the downstream SR excludes entirely).
+-- NOTE: `computed_at` is assumed to be content_performance's snapshot-timestamp
+--     column (the same name content_metrics_run_log_v2 uses). If the column is
+--     named differently, swap it on the ORDER BY below.
+cp_status AS (
+  SELECT series_id, status AS video_status
+  FROM `seekho-c084b.analytics_content.content_performance`
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY series_id ORDER BY computed_at DESC) = 1
+),
 cp AS (
   SELECT
-    series_id,
-    MAX(targ_comp) AS targ_comp,
-    MAX(status)    AS video_status
-  FROM `seekho-c084b.analytics_content.content_performance`
-  GROUP BY series_id
+    p.series_id,
+    MAX(p.targ_comp)            AS targ_comp,
+    ANY_VALUE(cps.video_status) AS video_status
+  FROM `seekho-c084b.analytics_content.content_performance` p
+  LEFT JOIN cp_status cps USING (series_id)
+  GROUP BY p.series_id
 ),
 ep_seq AS (
   SELECT s.*,
