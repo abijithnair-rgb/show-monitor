@@ -4,6 +4,7 @@ import { sampleData } from '@/lib/sample';
 import { fetchSheets, fetchRemote, remoteStatus } from '@/lib/remote';
 import { fetchActions, claimAction, updateClaim, archiveAction, releaseAction, setManagerAction } from '@/lib/actions';
 import { fetchNse, createNse, extendNse, setNseManagerVerdict, setNseShowId, setNseStatus, deleteNse } from '@/lib/nse';
+import { fetchGroups, claimGroup, updateGroup, archiveGroup, releaseGroup } from '@/lib/groups';
 
 // Global app state (replaces the original mutable `state` object).
 export const useStore = create((set, get) => ({
@@ -23,6 +24,10 @@ export const useStore = create((set, get) => ({
 
   // New Show Experiments board (Vercel KV). nse = { experimentId: record }.
   nse: {}, nseConfigured: false,
+
+  // Group-experiment board (Vercel KV). groupActions = { experimentId: claim }
+  // (scope = language/bu/poc); groupHistory = { "scope:value": [concluded] }.
+  groupActions: {}, groupHistory: {}, groupActionsConfigured: false,
 
   tab: 'data',
   // Navigation history (back/forward) — a stack of { tab, deepDiveId, deepLang }
@@ -140,6 +145,7 @@ export const useStore = create((set, get) => ({
       set(patch);
       get().loadActions();
       get().loadNse();
+      get().loadGroups();
     } catch (err) {
       console.warn('idb load failed', err);
       set({ hydrated: true });
@@ -275,6 +281,47 @@ export const useStore = create((set, get) => ({
     get().applyNse(id, null);
   },
 
+  // ---- Group-experiment board (Vercel KV) ----
+  loadGroups: async () => {
+    try {
+      const { configured, groups, history } = await fetchGroups();
+      set({ groupActionsConfigured: !!configured, groupActions: groups || {}, groupHistory: history || {} });
+    } catch {
+      set({ groupActionsConfigured: false });
+    }
+  },
+  // Patch a single group claim into the map by experiment id (null = removed).
+  applyGroup: (id, claim) => set((st) => {
+    const next = { ...st.groupActions };
+    if (claim) next[String(claim.id ?? id)] = claim; else delete next[String(id)];
+    return { groupActions: next };
+  }),
+  // Create a NEW group experiment for a scope value (server assigns the id).
+  claimGroupExp: async (scope, scopeValue, by, snapshot, extra) => {
+    const { id, claim } = await claimGroup(scope, scopeValue, by, snapshot, extra);
+    get().applyGroup(id, claim);
+    return claim;
+  },
+  updateGroupFields: async (id, fields) => {
+    const res = await updateGroup(id, fields);
+    get().applyGroup(res.id ?? id, res.claim);
+    return res.claim;
+  },
+  archiveGroupExp: async (id, verdict, finalSnapshot, concludeNote) => {
+    const { archived } = await archiveGroup(id, verdict, finalSnapshot, concludeNote);
+    set((st) => {
+      const groupActions = { ...st.groupActions }; delete groupActions[String(id)];
+      const groupHistory = { ...st.groupHistory };
+      const key = archived ? `${archived.scope}:${archived.scope_value}` : String(id);
+      groupHistory[key] = [archived, ...(groupHistory[key] || [])];
+      return { groupActions, groupHistory };
+    });
+  },
+  releaseGroupExp: async (id) => {
+    await releaseGroup(id);
+    get().applyGroup(id, null);
+  },
+
   // ---- Google-Sheet auto-sync ----
   saveSettings: async () => {
     const s = get();
@@ -289,6 +336,7 @@ export const useStore = create((set, get) => ({
     const s = get();
     s.loadActions(); // refresh the shared ownership board alongside data sync
     s.loadNse();     // refresh the new-show experiments board too
+    s.loadGroups();  // refresh the group-experiment board too
     const cfg = await s.checkRemote();
     if (cfg.combined || cfg.rca) return s.syncFromRedash({ silent });
     if (s.sheetCombinedUrl || s.sheetRcaUrl) return s.syncFromSheets({ silent });

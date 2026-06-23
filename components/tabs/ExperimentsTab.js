@@ -8,6 +8,7 @@ import {
   evalVerdict, VERDICT_META, reviewDue,
 } from '@/lib/ownership';
 import { fmtDate, LANG_NAMES } from '@/lib/format';
+import GroupExperimentsTable, { AddGroupExperimentModal } from '@/components/GroupExperiments';
 
 // Currently running experiments — one row per active claim (the `actions` map).
 // Shows metric, POC (owner), status at pickup, target, current number, review
@@ -18,6 +19,7 @@ export default function ExperimentsTab() {
   const actionsConfigured = useStore((s) => s.actionsConfigured);
   const openDeepDive = useStore((s) => s.openDeepDive);
   const [poc, setPoc] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
 
   const model = useMemo(() => buildModel(data), [data]);
   const byId = useMemo(() => new Map(model.map((s) => [String(s.id), s])), [model]);
@@ -49,8 +51,15 @@ export default function ExperimentsTab() {
   if (!actionsConfigured) {
     return (
       <div>
-        <h2 className="text-xl font-semibold mb-1">Experiments</h2>
-        <p className="hint">Shared experiments are not configured on the server — link a Vercel KV (Upstash) store to enable the experiment board.</p>
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+          <div>
+            <h2 className="text-xl font-semibold mb-1">Experiments</h2>
+            <p className="hint">Shared experiments are not configured on the server — link a Vercel KV (Upstash) store to enable the experiment board.</p>
+          </div>
+          <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add experiment</button>
+        </div>
+        <GroupExperimentsTable />
+        {showAdd && <AddGroupExperimentModal onClose={() => setShowAdd(false)} />}
       </div>
     );
   }
@@ -62,13 +71,16 @@ export default function ExperimentsTab() {
           <h2 className="text-xl font-semibold mb-1">Experiments</h2>
           <p className="text-sm text-slate-500">{rows.length} running experiment{rows.length === 1 ? '' : 's'} — metric, target, progress & review date.</p>
         </div>
-        <label className="text-xs text-slate-500 flex flex-col gap-1">
-          Filter by POC
-          <select className="border border-slate-300 rounded-md px-2 py-1.5 text-sm text-slate-800" value={poc} onChange={(e) => setPoc(e.target.value)}>
-            <option value="">All POCs ({rows.length})</option>
-            {pocs.map((p) => <option key={p} value={p}>{p} ({rows.filter((r) => r.claim.by === p).length})</option>)}
-          </select>
-        </label>
+        <div className="flex items-end gap-3 flex-wrap">
+          <label className="text-xs text-slate-500 flex flex-col gap-1">
+            Filter by POC
+            <select className="border border-slate-300 rounded-md px-2 py-1.5 text-sm text-slate-800" value={poc} onChange={(e) => setPoc(e.target.value)}>
+              <option value="">All POCs ({rows.length})</option>
+              {pocs.map((p) => <option key={p} value={p}>{p} ({rows.filter((r) => r.claim.by === p).length})</option>)}
+            </select>
+          </label>
+          <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add experiment</button>
+        </div>
       </div>
 
       <div className="card overflow-x-auto">
@@ -140,6 +152,9 @@ export default function ExperimentsTab() {
           </tbody>
         </table>
       </div>
+
+      <GroupExperimentsTable />
+      {showAdd && <AddGroupExperimentModal onClose={() => setShowAdd(false)} />}
     </div>
   );
 }
