@@ -201,7 +201,7 @@ export function AddGroupExperimentModal({ onClose }) {
   useEffect(() => { setOpenMetric(null); }, [scope, scopeValue]);
 
   const shows = useMemo(() => scopeShows(model, scope, scopeValue), [model, scope, scopeValue]);
-  const snapshot = useMemo(() => groupLiveSnapshot(shows, data), [shows, data]);
+  const snapshot = useMemo(() => groupLiveSnapshot(shows, data, scope, scopeValue), [shows, data, scope, scopeValue]);
 
   // Active experiments for the selected scope value (to highlight boxes in use).
   const activeForScope = useMemo(() => {

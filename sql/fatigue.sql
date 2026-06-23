@@ -651,6 +651,38 @@ category_demand_density AS (
     ROUND(SAFE_DIVIDE(cw.category_paid_watchtime_28d, epc.category_eps_published_28d), 1) AS category_demand_density_sec_per_ep
   FROM category_watchtime cw
   LEFT JOIN eps_published_per_category epc USING (category_id, language)
+),
+-- LANGUAGE-LEVEL SUCCESS RATE — replicated from the team's canonical SR query so
+-- the dashboard's per-language number matches the source of truth EXACTLY.
+-- Differs from the per-series video_status pooling above:
+--   • universe: ACTIVE shows only (courses_show.show_type='active' AND state='live'),
+--     series in state live/expired — experimental / inactive shows are excluded.
+--   • date basis: content_performance.publish_date (NOT approved_dt).
+--   • window: videos published in the settled window [today-10 .. today-4]
+--     (e.g. run on 23-Jun → 13-Jun .. 19-Jun).
+--   • SR = DISTINCT series with status=1 ÷ (status=1 + status=0); NULL excluded.
+-- This is independent of the broader monitor's all-show universe and is surfaced
+-- only as the Group-experiments language success-rate box.
+language_success_rate AS (
+  SELECT
+    cs.language,
+    COUNT(DISTINCT IF(cp.status = 1, cp.series_id, NULL)) AS sr_pass,
+    COUNT(DISTINCT IF(cp.status = 1, cp.series_id, NULL))
+      + COUNT(DISTINCT IF(cp.status = 0, cp.series_id, NULL)) AS sr_n,
+    ROUND(
+      100 * COUNT(DISTINCT IF(cp.status = 1, cp.series_id, NULL))
+      / NULLIF(COUNT(DISTINCT IF(cp.status = 1, cp.series_id, NULL))
+             + COUNT(DISTINCT IF(cp.status = 0, cp.series_id, NULL)), 0)
+    ) AS language_success_rate_pct
+  FROM `seekho-c084b.analytics_content.content_performance` cp
+  JOIN `seekho-c084b.seekho.courses_series` cs ON cs.id = cp.series_id
+  JOIN `seekho-c084b.seekho.courses_show`   sh ON sh.id = cs.show_id
+  WHERE sh.show_type = 'active' AND sh.state = 'live'
+    AND cs.state IN ('live','expired')
+    AND cs.language IN ('hi','ta','te','ml','kn')
+    AND cp.publish_date BETWEEN DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 10 DAY)
+                            AND DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 4 DAY)
+  GROUP BY cs.language
 )
 SELECT
   iw.series_id, iw.series_title, iw.show_id, sh.title AS show_title,
@@ -733,7 +765,13 @@ SELECT
   cm.category_avg_reach_rate_pct, cm.category_avg_reach_delta_pct,
   cc.category_d0_viewers_pct_change_4w,
   cdd.category_paid_watchtime_28d, cdd.category_eps_published_28d,
-  cdd.category_demand_density_sec_per_ep
+  cdd.category_demand_density_sec_per_ep,
+  -- Canonical language-level success rate (active+live shows, published in the
+  -- settled window). Constant across all rows of a language; the tool reads it
+  -- for the Group-experiments language success-rate box.
+  lsr.language_success_rate_pct,
+  lsr.sr_pass AS language_sr_pass,
+  lsr.sr_n    AS language_sr_n
 FROM in_window_videos iw
 LEFT JOIN cms_latest                             cms  ON cms.series_id  = iw.series_id
 LEFT JOIN cms_d0                                 cms0 ON cms0.series_id = iw.series_id
@@ -743,4 +781,5 @@ LEFT JOIN show_with_remarks       swr ON swr.show_id    = iw.show_id
 LEFT JOIN category_metrics        cm  ON cm.category_id = iw.category_id AND cm.language = iw.language
 LEFT JOIN category_change         cc  ON cc.category_id = iw.category_id AND cc.language = iw.language
 LEFT JOIN category_demand_density cdd ON cdd.category_id = iw.category_id AND cdd.language = iw.language
+LEFT JOIN language_success_rate   lsr ON lsr.language    = iw.language
 ORDER BY iw.language, iw.show_id, iw.approved_dt DESC, iw.ep_num DESC
