@@ -162,7 +162,7 @@ function GroupPickupForm({ scope, scopeValue, metricKey, snapshot, onClose, onSa
 // ---- Running group-experiment row controls ----
 // Verdict is auto-judged (no manual reached/failed override). Owner or manager
 // may conclude a decided/review-due experiment; only a manager (Deepak) may discard.
-function GroupRowControls({ claim, verdict }) {
+export function GroupRowControls({ claim, verdict }) {
   const userName = useStore((s) => s.userName);
   const archiveGroupExp = useStore((s) => s.archiveGroupExp);
   const releaseGroupExp = useStore((s) => s.releaseGroupExp);
