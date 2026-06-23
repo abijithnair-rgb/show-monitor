@@ -7,7 +7,7 @@ import {
   currentFor, metricLabel, targetText, trackedValueText,
   evalVerdict, VERDICT_META, reviewDue,
 } from '@/lib/ownership';
-import { fmtDate, LANG_NAMES } from '@/lib/format';
+import { fmtDate, LANG_NAMES, num } from '@/lib/format';
 import GroupExperimentsTable, { AddGroupExperimentModal } from '@/components/GroupExperiments';
 
 // Currently running experiments — one row per active claim (the `actions` map).
@@ -83,6 +83,8 @@ export default function ExperimentsTab() {
         </div>
       </div>
 
+      <LanguageSuccessRate rows={data.langsrRows} />
+
       <div className="card overflow-x-auto">
         <table className="data-table">
           <thead>
@@ -155,6 +157,36 @@ export default function ExperimentsTab() {
 
       <GroupExperimentsTable />
       {showAdd && <AddGroupExperimentModal onClose={() => setShowAdd(false)} />}
+    </div>
+  );
+}
+
+// Language-level success rate (settled series, active shows) over the last
+// settled week — from the content_performance SR query. SR = successful ÷
+// (successful + failed) on distinct series.
+const LANGSR_ORDER = ['hi', 'ta', 'te', 'ml', 'kn'];
+function LanguageSuccessRate({ rows }) {
+  if (!rows || !rows.length) return null;
+  const byLang = {};
+  rows.forEach((r) => { byLang[String(r.language)] = r; });
+  const langs = [...LANGSR_ORDER.filter((l) => byLang[l]), ...Object.keys(byLang).filter((l) => !LANGSR_ORDER.includes(l))];
+  const srOf = (r) => { const s = num(r.successful) || 0, f = num(r.failed) || 0; const d = s + f; return d ? Math.round((s / d) * 100) : null; };
+  const tone = (pct) => (pct == null ? 'text-slate-400' : pct >= 80 ? 'text-emerald-700' : pct >= 60 ? 'text-amber-600' : 'text-red-600');
+  return (
+    <div className="card p-4 mb-4">
+      <div className="font-semibold mb-2">Success rate by language <span className="hint">· settled series (status pass/fail), active shows, last settled week</span></div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {langs.map((l) => {
+          const r = byLang[l]; const pct = srOf(r); const s = num(r.successful) || 0, f = num(r.failed) || 0;
+          return (
+            <div key={l} className="rounded-md border border-slate-200 px-3 py-2">
+              <div className="text-[11px] text-slate-500">{LANG_NAMES[l] || l}</div>
+              <div className={'text-2xl font-semibold ' + tone(pct)}>{pct == null ? '—' : pct + '%'}</div>
+              <div className="hint">{s}/{s + f} settled{r.series != null ? ` · ${num(r.series) || 0} series` : ''}</div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

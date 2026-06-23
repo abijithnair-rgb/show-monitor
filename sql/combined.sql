@@ -1865,4 +1865,34 @@ WHERE date_ >= DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 7 DAY)
 ORDER BY show_id, date_
 ) t
 
+UNION ALL
+SELECT 'langsr' AS dataset, TO_JSON_STRING(t) AS row_json FROM (
+-- LANGUAGE-LEVEL SUCCESS RATE over settled series published in [today-10 .. today-4],
+-- for active & live shows. SR = successful ÷ (successful+failed) on DISTINCT series.
+-- status from content_performance (1=success, 0=failed; NULL excluded).
+WITH sr_active_shows AS (
+  SELECT DISTINCT id AS show_id
+  FROM `seekho-c084b.seekho.courses_show`
+  WHERE show_type = 'active' AND state = 'live'
+),
+sr_c AS (
+  SELECT cs.language, cp.series_id, cp.status
+  FROM `seekho-c084b.analytics_content.content_performance` cp
+  JOIN `seekho-c084b.seekho.courses_series` cs ON cs.id = cp.series_id
+  WHERE cp.publish_date BETWEEN DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 10 DAY)
+                            AND DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 4 DAY)
+    AND cs.language IN ('hi','ta','te','ml','kn')
+    AND cs.show_id IN (SELECT show_id FROM sr_active_shows)
+    AND (cs.state = 'live' OR cs.state = 'expired')
+)
+SELECT
+  language,
+  COUNT(DISTINCT series_id)                       AS series,
+  COUNT(DISTINCT IF(status = 1, series_id, NULL)) AS successful,
+  COUNT(DISTINCT IF(status = 0, series_id, NULL)) AS failed
+FROM sr_c
+GROUP BY 1
+ORDER BY language
+) t
+
 ORDER BY dataset

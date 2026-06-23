@@ -8,8 +8,8 @@ import { fetchGroups, claimGroup, updateGroup, archiveGroup, releaseGroup } from
 
 // Global app state (replaces the original mutable `state` object).
 export const useStore = create((set, get) => ({
-  evalRows: null, fatRows: null, hdcRows: null, snapRows: null, tsRows: null, metaRows: null, rcaRows: null, audRows: null, retRows: null, dauRows: null,
-  evalMeta: null, fatMeta: null, hdcMeta: null, snapMeta: null, tsMeta: null, metaMeta: null, rcaMeta: null, audMeta: null, retMeta: null, dauMeta: null,
+  evalRows: null, fatRows: null, hdcRows: null, snapRows: null, tsRows: null, metaRows: null, rcaRows: null, audRows: null, retRows: null, dauRows: null, langsrRows: null,
+  evalMeta: null, fatMeta: null, hdcMeta: null, snapMeta: null, tsMeta: null, metaMeta: null, rcaMeta: null, audMeta: null, retMeta: null, dauMeta: null, langsrMeta: null,
   hydrated: false,
 
   // Auto-sync: Redash proxy (keys server-side) is primary; Google-Sheet links optional.
@@ -51,8 +51,8 @@ export const useStore = create((set, get) => ({
   data: () => {
     const s = get();
     return {
-      evalRows: s.evalRows, fatRows: s.fatRows, hdcRows: s.hdcRows, snapRows: s.snapRows, tsRows: s.tsRows, metaRows: s.metaRows, rcaRows: s.rcaRows, audRows: s.audRows, retRows: s.retRows, dauRows: s.dauRows,
-      evalMeta: s.evalMeta, fatMeta: s.fatMeta, hdcMeta: s.hdcMeta, snapMeta: s.snapMeta, tsMeta: s.tsMeta, metaMeta: s.metaMeta, rcaMeta: s.rcaMeta, audMeta: s.audMeta, retMeta: s.retMeta, dauMeta: s.dauMeta,
+      evalRows: s.evalRows, fatRows: s.fatRows, hdcRows: s.hdcRows, snapRows: s.snapRows, tsRows: s.tsRows, metaRows: s.metaRows, rcaRows: s.rcaRows, audRows: s.audRows, retRows: s.retRows, dauRows: s.dauRows, langsrRows: s.langsrRows,
+      evalMeta: s.evalMeta, fatMeta: s.fatMeta, hdcMeta: s.hdcMeta, snapMeta: s.snapMeta, tsMeta: s.tsMeta, metaMeta: s.metaMeta, rcaMeta: s.rcaMeta, audMeta: s.audMeta, retMeta: s.retMeta, dauMeta: s.dauMeta, langsrMeta: s.langsrMeta,
       managerOverrides: s.managers,
     };
   },
@@ -106,6 +106,7 @@ export const useStore = create((set, get) => ({
     await idbSet('aud', s.audRows ? { rows: s.audRows, meta: s.audMeta } : null);
     await idbSet('ret', s.retRows ? { rows: s.retRows, meta: s.retMeta } : null);
     await idbSet('dau', s.dauRows ? { rows: s.dauRows, meta: s.dauMeta } : null);
+    await idbSet('langsr', s.langsrRows ? { rows: s.langsrRows, meta: s.langsrMeta } : null);
   },
 
   hydrate: async () => {
@@ -120,6 +121,7 @@ export const useStore = create((set, get) => ({
         au = await idbGet('aud'),
         re = await idbGet('ret'),
         da = await idbGet('dau'),
+        lsr = await idbGet('langsr'),
         st = await idbGet('settings');
       const patch = { hydrated: true };
       if (st) {
@@ -138,6 +140,7 @@ export const useStore = create((set, get) => ({
       if (au && au.rows) { patch.audRows = au.rows; patch.audMeta = au.meta; }
       if (re && re.rows) { patch.retRows = re.rows; patch.retMeta = re.meta; }
       if (da && da.rows) { patch.dauRows = da.rows; patch.dauMeta = da.meta; }
+      if (lsr && lsr.rows) { patch.langsrRows = lsr.rows; patch.langsrMeta = lsr.meta; }
       patch.tab = patch.evalRows || patch.fatRows ? 'explorer' : 'data';
       // Seed the nav history at the landing tab so back/forward start clean.
       patch.navStack = [{ tab: patch.tab, deepDiveId: null, deepLang: '' }];
@@ -163,7 +166,7 @@ export const useStore = create((set, get) => ({
   },
 
   // Set all three datasets from a single combined upload (only non-empty buckets replace).
-  setCombined: async ({ eval: ev, fat, hdc, ts, showmeta, aud, ret, dau, meta }) => {
+  setCombined: async ({ eval: ev, fat, hdc, ts, showmeta, aud, ret, dau, langsr, meta }) => {
     const patch = {};
     if (ev && ev.length) { patch.evalRows = ev; patch.evalMeta = meta.eval; }
     if (fat && fat.length) { patch.fatRows = fat; patch.fatMeta = meta.fat; }
@@ -173,6 +176,7 @@ export const useStore = create((set, get) => ({
     if (aud && aud.length) { patch.audRows = aud; patch.audMeta = meta.aud; }
     if (ret && ret.length) { patch.retRows = ret; patch.retMeta = meta.ret; }
     if (dau && dau.length) { patch.dauRows = dau; patch.dauMeta = meta.dau; }
+    if (langsr && langsr.length) { patch.langsrRows = langsr; patch.langsrMeta = meta.langsr; }
     set(patch);
     await get().persist();
   },
@@ -403,13 +407,14 @@ export const useStore = create((set, get) => ({
       audRows: S.aud, audMeta: S.aud && S.aud.length ? mk('sample_audience.csv', S.aud) : null,
       retRows: S.ret, retMeta: S.ret && S.ret.length ? mk('sample_retention.csv', S.ret) : null,
       dauRows: S.dau, dauMeta: S.dau && S.dau.length ? mk('sample_dau.csv', S.dau) : null,
+      langsrRows: S.langsr, langsrMeta: S.langsr && S.langsr.length ? mk('sample_langsr.csv', S.langsr) : null,
       tab: 'explorer',
     });
     await get().persist();
   },
 
   clearAll: async () => {
-    set({ evalRows: null, fatRows: null, hdcRows: null, snapRows: null, tsRows: null, metaRows: null, rcaRows: null, audRows: null, retRows: null, dauRows: null, evalMeta: null, fatMeta: null, hdcMeta: null, snapMeta: null, tsMeta: null, metaMeta: null, rcaMeta: null, audMeta: null, retMeta: null, dauMeta: null, tab: 'data' });
+    set({ evalRows: null, fatRows: null, hdcRows: null, snapRows: null, tsRows: null, metaRows: null, rcaRows: null, audRows: null, retRows: null, dauRows: null, langsrRows: null, evalMeta: null, fatMeta: null, hdcMeta: null, snapMeta: null, tsMeta: null, metaMeta: null, rcaMeta: null, audMeta: null, retMeta: null, dauMeta: null, langsrMeta: null, tab: 'data' });
     await idbDel('eval');
     await idbDel('fat');
     await idbDel('hdc');
@@ -420,5 +425,6 @@ export const useStore = create((set, get) => ({
     await idbDel('aud');
     await idbDel('ret');
     await idbDel('dau');
+    await idbDel('langsr');
   },
 }));
