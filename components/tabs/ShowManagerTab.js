@@ -203,8 +203,15 @@ export default function ShowManagerTab() {
   // history) — NOT period-scoped, so nothing is lost. The week/month selector
   // only drives the window-based HDC-rate / success-rate metrics in the
   // "Shows managed" view, not the experiment list or these counts.
+  // Match the owner by first-name token so stored variants ("Kartikey",
+  // "Kartikey Nair", "kartikey", "Kartikey (2)") all map to the roster POC.
+  const ownedBy = (e, name) => {
+    const lo = String(name || '').trim().toLowerCase();
+    const by = String(e.by || '').trim().toLowerCase();
+    return by === lo || firstTok(by) === lo;
+  };
   const scopedFor = (name) => {
-    const exps = experiments.filter((e) => e.by === name);
+    const exps = experiments.filter((e) => ownedBy(e, name));
     const shows = new Set(exps.map((e) => e.showId).filter(Boolean));
     const pickedUp = exps.length;
     const concludedExps = exps.filter((e) => e.concluded);
