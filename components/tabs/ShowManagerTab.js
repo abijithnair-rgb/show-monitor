@@ -9,6 +9,11 @@ import {
   weekKey, monthKey, weekRange, monthRange, todayStr,
 } from '@/lib/ownership';
 import { computeNseVerdict, V } from '@/lib/nseVerdict';
+import {
+  scopeShows, scopeValueLabel, scopeMetaLabel,
+  groupCurrentFor, groupEvalVerdict, groupTargetText, groupTrackedValueText,
+  groupMetricLabel, groupMetricKeyOfTarget,
+} from '@/lib/groupExperiments';
 import { fmtDate, LANG_NAMES } from '@/lib/format';
 
 const slice10 = (v) => String(v || '').slice(0, 10);
@@ -29,6 +34,8 @@ export default function ShowManagerTab() {
   const data = useStore((s) => s.data());
   const actions = useStore((s) => s.actions);
   const history = useStore((s) => s.history);
+  const groupActions = useStore((s) => s.groupActions);
+  const groupHistory = useStore((s) => s.groupHistory);
   const nse = useStore((s) => s.nse);
   const actionsConfigured = useStore((s) => s.actionsConfigured);
   const userName = useStore((s) => s.userName);
@@ -70,26 +77,39 @@ export default function ShowManagerTab() {
   const hdcIdx = useMemo(() => (data.hdcRows ? buildHdcIndex(data.hdcRows) : null), [data]);
   const fatIdx = useMemo(() => (data.fatRows ? buildFatIndex(data.fatRows) : null), [data]);
 
-  // Flatten every experiment (active + concluded) into one normalised list.
+  // Flatten every experiment (active + concluded) into one normalised list —
+  // per-show ownership experiments AND group experiments (scope = language / BU /
+  // POC), so both kinds appear in the manager's Experiments sub-tab and counts.
+  const model2 = model; // alias for scopeShows below
   const experiments = useMemo(() => {
     const out = [];
+    // ---- per-show experiments (active) ----
     for (const claim of Object.values(actions || {})) {
       const s = byId.get(String(claim.show_id));
       const cur = s ? currentFor(claim, s, data, hdcIdx, fatIdx) : null;
       out.push({
-        id: claim.id, claim, cur, concluded: false, by: claim.by, showId: String(claim.show_id), s,
+        id: claim.id, claim, cur, concluded: false, by: claim.by, showId: String(claim.show_id), s, isGroup: false,
+        title: s?.title || metaById.get(String(claim.show_id))?.show_name || `#${claim.show_id}`,
+        metricText: metricLabel(claim.metric), targetStr: targetText(claim.target),
+        pickupStr: trackedValueText(claim.target, claim.snapshot),
+        resultStr: cur ? trackedValueText(claim.target, cur) : '—',
         claimedAt: slice10(claim.claimed_at), concludedAt: null,
         metric: claim.metric, target: claim.target,
         verdict: cur ? evalVerdict(claim, cur) : 'tracking',
         reviewDate: claim.review_date || null,
       });
     }
+    // ---- per-show experiments (concluded → history) ----
     for (const arr of Object.values(history || {})) {
       for (const rec of arr || []) {
         const s = byId.get(String(rec.show_id));
         out.push({
           id: rec.id || `${rec.show_id}:${rec.concluded_at}`, claim: rec, cur: null, concluded: true,
-          by: rec.by, showId: String(rec.show_id), s,
+          by: rec.by, showId: String(rec.show_id), s, isGroup: false,
+          title: s?.title || metaById.get(String(rec.show_id))?.show_name || `#${rec.show_id}`,
+          metricText: metricLabel(rec.metric), targetStr: targetText(rec.target),
+          pickupStr: trackedValueText(rec.target, rec.snapshot),
+          resultStr: rec.final_snapshot ? trackedValueText(rec.target, rec.final_snapshot) : '—',
           claimedAt: slice10(rec.claimed_at), concludedAt: slice10(rec.concluded_at),
           metric: rec.metric, target: rec.target,
           verdict: rec.verdict === 'reached' ? 'reached' : 'failed',
@@ -97,8 +117,41 @@ export default function ShowManagerTab() {
         });
       }
     }
+    // ---- group experiments (active) ----
+    for (const claim of Object.values(groupActions || {})) {
+      const sh = scopeShows(model2, claim.scope, claim.scope_value);
+      const cur = groupCurrentFor(claim, sh, data);
+      const mKey = claim.metric || groupMetricKeyOfTarget(claim.target);
+      out.push({
+        id: claim.id, claim, cur, concluded: false, by: claim.by, showId: null, s: null, isGroup: true,
+        title: scopeValueLabel(claim.scope, claim.scope_value), scopeKind: scopeMetaLabel(claim.scope),
+        metricText: groupMetricLabel(mKey), targetStr: groupTargetText(claim.target),
+        pickupStr: '—', resultStr: groupTrackedValueText(claim.target, cur),
+        claimedAt: slice10(claim.claimed_at), concludedAt: null,
+        metric: mKey, target: claim.target,
+        verdict: groupEvalVerdict(claim, cur),
+        reviewDate: claim.review_date || null,
+      });
+    }
+    // ---- group experiments (concluded → history) ----
+    for (const arr of Object.values(groupHistory || {})) {
+      for (const rec of arr || []) {
+        const mKey = rec.metric || groupMetricKeyOfTarget(rec.target);
+        out.push({
+          id: rec.id || `${rec.scope}:${rec.scope_value}:${rec.concluded_at}`, claim: rec, cur: null, concluded: true,
+          by: rec.by, showId: null, s: null, isGroup: true,
+          title: scopeValueLabel(rec.scope, rec.scope_value), scopeKind: scopeMetaLabel(rec.scope),
+          metricText: groupMetricLabel(mKey), targetStr: groupTargetText(rec.target),
+          pickupStr: '—', resultStr: rec.final_snapshot ? groupTrackedValueText(rec.target, rec.final_snapshot) : '—',
+          claimedAt: slice10(rec.claimed_at), concludedAt: slice10(rec.concluded_at),
+          metric: mKey, target: rec.target,
+          verdict: rec.verdict === 'reached' ? 'reached' : 'failed',
+          reviewDate: rec.review_date || null,
+        });
+      }
+    }
     return out;
-  }, [actions, history, byId, data, hdcIdx, fatIdx]);
+  }, [actions, history, groupActions, groupHistory, byId, model2, metaById, data, hdcIdx, fatIdx]);
 
   // New-show experiments (the NSE board), with each record's live verdict. Keyed
   // by its assigned show manager so the single-manager view can list them.
@@ -416,26 +469,24 @@ export default function ShowManagerTab() {
             <tbody>
               {expRows.length ? expRows.map((e) => {
                 const vm = VERDICT_META[e.verdict] || VERDICT_META.tracking;
-                const title = e.s?.title || metaById.get(e.showId)?.show_name || `#${e.showId}`;
                 const due = !e.concluded && reviewDue(e.claim) && e.verdict === 'tracking';
-                const result = e.concluded
-                  ? (e.claim.final_snapshot ? trackedValueText(e.target, e.claim.final_snapshot) : '—')
-                  : (e.cur ? trackedValueText(e.target, e.cur) : '—');
                 return (
-                  <tr key={e.id} className="row-clickable" onClick={() => e.s && openDeepDive(e.s.id)}>
+                  <tr key={e.id} className={e.s ? 'row-clickable' : ''} onClick={() => e.s && openDeepDive(e.s.id)}>
                     <td>
-                      <div className="font-medium">{title}</div>
-                      {e.s && (
+                      <div className="font-medium">{e.title}</div>
+                      {e.isGroup ? (
+                        <div className="mt-1"><span className="chip chip-indigo">{e.scopeKind}</span></div>
+                      ) : e.s && (
                         <div className="mt-1 flex gap-1 flex-wrap">
                           <span className="chip chip-blue">{LANG_NAMES[e.s.language] || e.s.language || '?'}</span>
                           {e.s.category && <span className="chip chip-purple">{e.s.category}</span>}
                         </div>
                       )}
                     </td>
-                    <td><span className="chip chip-purple">{metricLabel(e.metric)}</span></td>
-                    <td className="text-sm text-slate-600">{targetText(e.target)}</td>
-                    <td>{trackedValueText(e.target, e.claim.snapshot)}</td>
-                    <td className="font-semibold">{result}</td>
+                    <td><span className="chip chip-purple">{e.metricText}</span></td>
+                    <td className="text-sm text-slate-600">{e.targetStr}</td>
+                    <td>{e.pickupStr}</td>
+                    <td className="font-semibold">{e.resultStr}</td>
                     <td className="text-sm text-slate-600">
                       {e.concluded ? `concluded ${fmtDate(e.concludedAt)}` : (e.reviewDate ? `review ${fmtDate(e.reviewDate)}` : '—')}
                       {due && <div className="hint" style={{ color: '#991b1b' }}>due</div>}
