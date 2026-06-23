@@ -314,13 +314,11 @@ export default function ShowManagerTab() {
     return { id, s, title, language, category, status, hr, sr, exps };
   }).sort((a, b) => String(a.title).localeCompare(String(b.title)));
 
-  // Experiment-level rows for this manager in the period (one row per experiment).
-  const expRows = [...g.exps].sort((a, b) => {
-    const aAttn = !a.concluded && (a.verdict !== 'tracking' || reviewDue(a.claim));
-    const bAttn = !b.concluded && (b.verdict !== 'tracking' || reviewDue(b.claim));
-    if (aAttn !== bAttn) return aAttn ? -1 : 1;
-    return String(b.claimedAt || '').localeCompare(String(a.claimedAt || ''));
-  });
+  // Experiment-level rows for this manager in the period (one row per
+  // experiment), sorted by latest picked up first. Use the full claimed_at
+  // timestamp (claimedAt is date-only, so same-day pickups would otherwise tie).
+  const pickupTs = (e) => String(e.claim?.claimed_at || e.claimedAt || '');
+  const expRows = [...g.exps].sort((a, b) => pickupTs(b).localeCompare(pickupTs(a)));
 
   // This manager's new-show experiments (match by exact name or first-name token),
   // newest pickup first. Shown in full (not period-scoped) so nothing is hidden.
