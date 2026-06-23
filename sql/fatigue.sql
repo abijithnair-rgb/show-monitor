@@ -655,8 +655,9 @@ category_demand_density AS (
 -- LANGUAGE-LEVEL SUCCESS RATE — replicated from the team's canonical SR query so
 -- the dashboard's per-language number matches the source of truth EXACTLY.
 -- Differs from the per-series video_status pooling above:
---   • universe: ACTIVE shows only (courses_show.show_type='active' AND state='live'),
---     series in state live/expired — experimental / inactive shows are excluded.
+--   • universe: ACTIVE shows only (series whose show_id is in active_shows —
+--     courses_show.show_type='active' AND state='live'), series state live/expired.
+--   • language: read from content_performance.language (cp), grouped per language.
 --   • date basis: content_performance.publish_date (NOT approved_dt).
 --   • window: videos published in the settled window [today-10 .. today-4]
 --     (e.g. run on 23-Jun → 13-Jun .. 19-Jun).
@@ -665,7 +666,7 @@ category_demand_density AS (
 -- only as the Group-experiments language success-rate box.
 language_success_rate AS (
   SELECT
-    cs.language,
+    cp.language,
     COUNT(DISTINCT IF(cp.status = 1, cp.series_id, NULL)) AS sr_pass,
     COUNT(DISTINCT IF(cp.status = 1, cp.series_id, NULL))
       + COUNT(DISTINCT IF(cp.status = 0, cp.series_id, NULL)) AS sr_n,
@@ -675,14 +676,15 @@ language_success_rate AS (
              + COUNT(DISTINCT IF(cp.status = 0, cp.series_id, NULL)), 0)
     ) AS language_success_rate_pct
   FROM `seekho-c084b.analytics_content.content_performance` cp
-  JOIN `seekho-c084b.seekho.courses_series` cs ON cs.id = cp.series_id
-  JOIN `seekho-c084b.seekho.courses_show`   sh ON sh.id = cs.show_id
-  WHERE sh.show_type = 'active' AND sh.state = 'live'
-    AND cs.state IN ('live','expired')
-    AND cs.language IN ('hi','ta','te','ml','kn')
-    AND cp.publish_date BETWEEN DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 10 DAY)
+  LEFT JOIN `seekho-c084b.seekho.courses_series` cs ON cs.id = cp.series_id
+  WHERE cp.publish_date BETWEEN DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 10 DAY)
                             AND DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 4 DAY)
-  GROUP BY cs.language
+    AND cs.show_id IN (
+      SELECT id FROM `seekho-c084b.seekho.courses_show`
+      WHERE show_type = 'active' AND state = 'live'
+    )
+    AND (cs.state = 'live' OR cs.state = 'expired')
+  GROUP BY cp.language
 )
 SELECT
   iw.series_id, iw.series_title, iw.show_id, sh.title AS show_title,
