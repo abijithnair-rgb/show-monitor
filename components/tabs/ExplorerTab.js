@@ -4,18 +4,10 @@ import { useStore } from '@/store/useStore';
 import { buildModel, buildFatIndex } from '@/lib/model';
 import { buildHdcIndex } from '@/lib/hdc';
 import { successRate } from '@/lib/metrics';
-import { ACTION_META } from '@/lib/constants';
 import { LANG_NAMES } from '@/lib/format';
 import { METRIC_TIPS } from '@/lib/tips';
 import { explorerRow } from '@/lib/render';
 import FilterBar, { applyFilters, sortModel } from '@/components/FilterBar';
-
-const HERO = [
-  { tone: 'red', label: 'Stop / urgent', color: '#991b1b', tipKey: 'hero_red' },
-  { tone: 'amber', label: 'Fix / adjust', color: '#92400e', tipKey: 'hero_amber' },
-  { tone: 'green', label: 'Promote / scale / hold', color: '#065f46', tipKey: 'hero_green' },
-  { tone: 'grey', label: 'Watch / single-lens', color: '#475569', tipKey: 'hero_grey' },
-];
 
 export default function ExplorerTab() {
   const data = useStore((s) => s.data());
@@ -64,8 +56,6 @@ export default function ExplorerTab() {
       return filters.metricOp === 'lte' ? v <= mX : v >= mX;
     });
   }
-  const counts = { red: 0, amber: 0, green: 0, grey: 0 };
-  filtered.forEach((s) => counts[(ACTION_META[s.rec.key] || { tone: 'grey' }).tone]++);
   const sorted = sortModel(filtered, sortBy);
   const scopeLabel = filters.language ? LANG_NAMES[filters.language] || filters.language : 'all languages';
   const bodyHtml = sorted.map((s) => {
@@ -101,14 +91,6 @@ export default function ExplorerTab() {
             New Show Evaluation verdict leads; the Fatigue Monitor explains the cause and the reconciled call. Showing <b>{filtered.length}</b> of {model.length} shows · scope: <b>{scopeLabel}</b>.
           </p>
         </div>
-      </div>
-      <div className="flex gap-3 mb-4">
-        {HERO.map((h) => (
-          <div key={h.tone} className="kpi flex-1 cursor-pointer" {...tipAttr(h.tipKey)} onClick={() => setFilter('action', '')}>
-            <div className="lbl">{h.label}</div>
-            <div className="val" style={{ color: h.color }}>{counts[h.tone]}</div>
-          </div>
-        ))}
       </div>
       <div className="flex flex-wrap gap-3 items-end">
         <FilterBar model={model} hideAgreement />
