@@ -27,6 +27,15 @@ const nseVerdictChip = (v) => {
   return 'chip-grey';
 };
 const firstTok = (v) => String(v || '').trim().toLowerCase().split(/[\s._@]+/)[0];
+// Does a stored owner string belong to a roster POC? Case-INSENSITIVE, and
+// tolerant of variants — "Abijith" / "abijith" / "Abijith Nair" / "abijith@…"
+// all match the POC "Abijith". Compares the full name and the first-name token.
+const sameOwner = (rawOwner, pocName) => {
+  const lo = String(pocName || '').trim().toLowerCase();
+  const by = String(rawOwner || '').trim().toLowerCase();
+  if (!lo || !by) return false;
+  return by === lo || firstTok(by) === lo || firstTok(lo) === firstTok(by);
+};
 
 // Per-POC experiment tracking & ownership, scoped to a chosen week/month. A
 // "show manager" = the POC who owns (picked up / was assigned) an experiment.
@@ -61,8 +70,7 @@ export default function ShowManagerTab() {
       const mgr = s.manager;
       if (!mgr) continue;
       if (s.status !== 'active' && s.status !== 'experiment') continue;
-      const tok = firstTok(mgr);
-      const poc = ROSTER.find((p) => p.toLowerCase() === tok || p.toLowerCase() === String(mgr).trim().toLowerCase());
+      const poc = ROSTER.find((p) => sameOwner(mgr, p));
       if (poc) m.get(poc).add(String(s.id));
     }
     return m;
@@ -203,15 +211,8 @@ export default function ShowManagerTab() {
   // history) — NOT period-scoped, so nothing is lost. The week/month selector
   // only drives the window-based HDC-rate / success-rate metrics in the
   // "Shows managed" view, not the experiment list or these counts.
-  // Match the owner by first-name token so stored variants ("Kartikey",
-  // "Kartikey Nair", "kartikey", "Kartikey (2)") all map to the roster POC.
-  const ownedBy = (e, name) => {
-    const lo = String(name || '').trim().toLowerCase();
-    const by = String(e.by || '').trim().toLowerCase();
-    return by === lo || firstTok(by) === lo;
-  };
   const scopedFor = (name) => {
-    const exps = experiments.filter((e) => ownedBy(e, name));
+    const exps = experiments.filter((e) => sameOwner(e.by, name));
     const shows = new Set(exps.map((e) => e.showId).filter(Boolean));
     const pickedUp = exps.length;
     const concludedExps = exps.filter((e) => e.concluded);
@@ -325,7 +326,7 @@ export default function ShowManagerTab() {
   // This manager's new-show experiments (match by exact name or first-name token),
   // newest pickup first. Shown in full (not period-scoped) so nothing is hidden.
   const nseRows = nseAll
-    .filter(({ rec }) => rec.manager && (rec.manager === manager || firstTok(rec.manager) === manager.toLowerCase()))
+    .filter(({ rec }) => sameOwner(rec.manager, manager))
     .sort((a, b) => String(b.rec.pickup_date || '').localeCompare(String(a.rec.pickup_date || '')));
   // New-show experiment KPIs for this manager (matches the NSE tab's header).
   const NSE_CLOSED = new Set([V.REPLACE, V.REPLACE_SR, V.STOP_LIFECYCLE, V.STOP_CONTRIB, V.LAUNCH_FAIL]);
