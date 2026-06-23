@@ -263,6 +263,7 @@ export default function NewShowExperimentsTab() {
   const setUserName = useStore((s) => s.setUserName);
   const deleteNseExperiment = useStore((s) => s.deleteNseExperiment);
   const setNseShowId = useStore((s) => s.setNseShowId);
+  const openDeepDive = useStore((s) => s.openDeepDive);
 
   const manager = isManager(userName);
   const today = todayStr();
@@ -443,7 +444,13 @@ export default function NewShowExperimentsTab() {
                   <td className="whitespace-nowrap">{fmtDate(rec.pickup_date)}</td>
                   <td className="whitespace-nowrap">{fmtDate(rec.launch_date)}</td>
                   <td>
-                    <div className="font-medium">{rec.show_name || `#${rec.show_id}`}</div>
+                    {show ? (
+                      <button className="font-medium text-blue-600 hover:underline text-left" onClick={() => openDeepDive(show.id)}>
+                        {rec.show_name || `#${rec.show_id}`}
+                      </button>
+                    ) : (
+                      <div className="font-medium">{rec.show_name || `#${rec.show_id}`}</div>
+                    )}
                     <div className="mt-1 flex gap-1 flex-wrap items-center">
                       <span className="chip chip-blue">{LANG_NAMES[rec.language] || rec.language || '?'}</span>
                       {rec.category && <span className="chip chip-purple">{rec.category}</span>}
