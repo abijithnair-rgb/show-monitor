@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildModel } from '@/lib/model';
 import { fmtDate } from '@/lib/format';
-import { POCS, canManageClaim, EXPERIMENT_MAX_DAYS } from '@/lib/ownership';
+import { POCS, canManageClaim, isManager, EXPERIMENT_MAX_DAYS } from '@/lib/ownership';
 import {
   GROUP_SCOPES, scopeMetaLabel, scopeOptions, scopeShows, scopeValueLabel,
   GROUP_METRICS, groupMetric, groupMetricLabel,
@@ -150,27 +150,29 @@ function GroupPickupForm({ scope, scopeValue, metricKey, snapshot, onClose, onSa
   );
 }
 
-// ---- Running group-experiment row controls (owner / manager) ----
+// ---- Running group-experiment row controls ----
+// Verdict is auto-judged (no manual reached/failed override). Owner or manager
+// may conclude a decided/review-due experiment; only a manager (Deepak) may discard.
 function GroupRowControls({ claim, verdict }) {
   const userName = useStore((s) => s.userName);
-  const updateGroupFields = useStore((s) => s.updateGroupFields);
   const archiveGroupExp = useStore((s) => s.archiveGroupExp);
   const releaseGroupExp = useStore((s) => s.releaseGroupExp);
   const [busy, setBusy] = useState(false);
   const canManage = canManageClaim(claim, userName);
+  const canDiscard = isManager(userName);
   const due = reviewDue(claim);
+  const canConclude = canManage && (verdict !== 'tracking' || due);
 
-  if (!canManage) return <span className="hint">owner / manager only</span>;
+  if (!canConclude && !canDiscard) return <span className="hint">—</span>;
   const run = (fn) => { setBusy(true); Promise.resolve(fn()).finally(() => setBusy(false)); };
   return (
     <div className="flex gap-2 items-center flex-wrap text-xs" onClick={(e) => e.stopPropagation()}>
-      {verdict !== 'reached' && <button className="text-emerald-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => run(() => updateGroupFields(claim.id, { verdict_override: 'reached' }))}>reached</button>}
-      {verdict !== 'failed' && <button className="text-red-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => run(() => updateGroupFields(claim.id, { verdict_override: 'failed' }))}>failed</button>}
-      {claim.verdict_override && <button className="text-slate-500 hover:underline disabled:opacity-50" disabled={busy} onClick={() => run(() => updateGroupFields(claim.id, { verdict_override: null }))}>clear</button>}
-      {(verdict !== 'tracking' || due) && (
+      {canConclude && (
         <button className="text-slate-700 font-medium hover:underline disabled:opacity-50" disabled={busy} onClick={() => run(() => archiveGroupExp(claim.id, verdict))}>conclude</button>
       )}
-      <button className="text-slate-400 hover:text-slate-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => run(() => releaseGroupExp(claim.id))}>discard</button>
+      {canDiscard && (
+        <button className="text-slate-400 hover:text-slate-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => run(() => releaseGroupExp(claim.id))}>discard</button>
+      )}
     </div>
   );
 }
@@ -340,7 +342,9 @@ export default function GroupExperimentsTable() {
                 <th>Scope</th>
                 <th>Metric</th>
                 <th>POC</th>
+                <th>Status at pickup</th>
                 <th>Target</th>
+                <th>Action by</th>
                 <th>Current</th>
                 <th>Review date</th>
                 <th>Remark</th>
@@ -353,6 +357,8 @@ export default function GroupExperimentsTable() {
                 const vm = GROUP_VERDICT_META[verdict] || GROUP_VERDICT_META.tracking;
                 const due = reviewDue(claim) && verdict === 'tracking';
                 const tone = verdict === 'reached' ? ' bg-green-50' : (verdict === 'failed' || due) ? ' bg-red-50' : '';
+                const mKey = claim.metric || groupMetricKeyOfTarget(claim.target);
+                const pickVal = liveMetricValue(mKey, claim.snapshot);
                 return (
                   <tr key={claim.id} className={tone}>
                     <td className="whitespace-nowrap">{claim.claimed_at ? fmtDate(claim.claimed_at) : '—'}</td>
@@ -360,12 +366,14 @@ export default function GroupExperimentsTable() {
                       <span className="chip chip-indigo">{scopeMetaLabel(claim.scope)}</span>
                       <div className="mt-1 font-medium">{scopeValueLabel(claim.scope, claim.scope_value)}</div>
                     </td>
-                    <td><span className="chip chip-purple">{groupMetricLabel(claim.metric || groupMetricKeyOfTarget(claim.target))}</span></td>
+                    <td><span className="chip chip-purple">{groupMetricLabel(mKey)}</span></td>
                     <td className="font-medium text-slate-700">
                       {claim.by}
                       {claim.assigned_by && <div className="mt-1"><span className="chip chip-amber" title={`Assigned by ${claim.assigned_by}`}>assigned</span></div>}
                     </td>
+                    <td>{pickVal != null ? fmtVal(mKey, pickVal) : <span className="text-slate-300">—</span>}</td>
                     <td className="text-sm text-slate-600">{groupTargetText(claim.target)}</td>
+                    <td className="whitespace-nowrap">{claim.action_date ? fmtDate(claim.action_date) : <span className="text-slate-300">—</span>}</td>
                     <td className="font-semibold" title={groupProgressLine(claim, cur) || ''}>{groupTrackedValueText(claim.target, cur)}</td>
                     <td>
                       {claim.review_date ? fmtDate(claim.review_date) : <span className="text-slate-300">—</span>}
