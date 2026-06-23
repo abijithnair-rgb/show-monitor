@@ -207,12 +207,18 @@ export default function ShowManagerTab() {
     return `${dt.toLocaleString('en-US', { month: 'long' })} ${dt.getFullYear()}`;
   };
 
-  // Aggregate for one POC over ALL of their experiments (active + concluded
-  // history) — NOT period-scoped, so nothing is lost. The week/month selector
-  // only drives the window-based HDC-rate / success-rate metrics in the
-  // "Shows managed" view, not the experiment list or these counts.
+  // An experiment is "in the period" when its PICKUP date falls in the selected
+  // week/month window. (Concluded history is kept too — it's still scoped by when
+  // it was picked up, so nothing a POC did in that period is lost.)
+  const pickupInPeriod = (e) => {
+    if (!win.start || !win.end) return false;
+    const d = e.claimedAt;
+    return !!d && d >= win.start && d <= win.end;
+  };
+
+  // Aggregate for one POC over the experiments PICKED UP in the selected period.
   const scopedFor = (name) => {
-    const exps = experiments.filter((e) => sameOwner(e.by, name));
+    const exps = experiments.filter((e) => sameOwner(e.by, name) && pickupInPeriod(e));
     const shows = new Set(exps.map((e) => e.showId).filter(Boolean));
     const pickedUp = exps.length;
     const concludedExps = exps.filter((e) => e.concluded);
@@ -271,7 +277,7 @@ export default function ShowManagerTab() {
     return (
       <div>
         {header}
-        <p className="text-sm text-slate-500 mb-3">Experiment counts are all-time (incl. concluded history); HDC/SR metrics use <b>{periodLabel(selPeriod)}</b>. Click a manager to drill in.</p>
+        <p className="text-sm text-slate-500 mb-3">Experiments picked up in <b>{periodLabel(selPeriod)}</b> (incl. concluded). Click a manager to drill in.</p>
         <div className="card overflow-x-auto">
           <table className="data-table">
             <thead>
@@ -389,8 +395,8 @@ export default function ShowManagerTab() {
         <div className="px-4 pt-3 flex items-center justify-between gap-2 flex-wrap">
           <div className="text-sm font-semibold">
             {detailView === 'nse' ? 'New show experiments' : detailView === 'shows' ? 'Shows managed' : 'Experiments'}
-            {detailView === 'shows' && <> — {periodLabel(selPeriod)}</>}
-            <span className="hint"> ({detailView === 'nse' ? 'all new-show launch experiments owned by this manager' : detailView === 'shows' ? 'HDC rate & success rate over the window' : 'all experiments owned by this manager (incl. concluded history)'})</span>
+            {detailView !== 'nse' && <> — {periodLabel(selPeriod)}</>}
+            <span className="hint"> ({detailView === 'nse' ? 'all new-show launch experiments owned by this manager' : detailView === 'shows' ? 'HDC rate & success rate over the window' : 'experiments picked up in this period (incl. concluded)'})</span>
           </div>
           <div className="inline-flex rounded-md border border-slate-300 overflow-hidden text-xs">
             {[['experiments', 'Experiments'], ['shows', 'Shows managed'], ['nse', 'New show experiments']].map(([k, label]) => (
@@ -468,7 +474,7 @@ export default function ShowManagerTab() {
         ) : (
           <table className="data-table">
             <thead>
-              <tr><th>Show</th><th>Metric</th><th>Target</th><th>At pickup</th><th>Current / result</th><th>Date</th><th>Verdict</th></tr>
+              <tr><th>Pickup date</th><th>Show</th><th>Metric</th><th>Target</th><th>At pickup</th><th>Current / result</th><th>Date</th><th>Verdict</th></tr>
             </thead>
             <tbody>
               {expRows.length ? expRows.map((e) => {
@@ -476,6 +482,7 @@ export default function ShowManagerTab() {
                 const due = !e.concluded && reviewDue(e.claim) && e.verdict === 'tracking';
                 return (
                   <tr key={e.id} className={e.s ? 'row-clickable' : ''} onClick={() => e.s && openDeepDive(e.s.id)}>
+                    <td className="whitespace-nowrap">{e.claimedAt ? fmtDate(e.claimedAt) : <span className="text-slate-300">—</span>}</td>
                     <td>
                       <div className="font-medium">{e.title}</div>
                       {e.isGroup ? (
@@ -499,7 +506,7 @@ export default function ShowManagerTab() {
                   </tr>
                 );
               }) : (
-                <tr><td colSpan={7} className="text-center text-slate-400 py-6">No experiments owned by {manager} yet.</td></tr>
+                <tr><td colSpan={8} className="text-center text-slate-400 py-6">No experiments picked up by {manager} in {periodLabel(selPeriod)}.</td></tr>
               )}
             </tbody>
           </table>
