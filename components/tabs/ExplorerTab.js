@@ -68,7 +68,11 @@ export default function ExplorerTab() {
   filtered.forEach((s) => counts[(ACTION_META[s.rec.key] || { tone: 'grey' }).tone]++);
   const sorted = sortModel(filtered, sortBy);
   const scopeLabel = filters.language ? LANG_NAMES[filters.language] || filters.language : 'all languages';
-  const bodyHtml = sorted.map((s) => explorerRow(s, hdcRows, assign)).join('');
+  const bodyHtml = sorted.map((s) => {
+    const eps = fatIdx?.get(s.id)?.eps;
+    const sr = eps ? successRate(eps, data.fatRows) : null;
+    return explorerRow(s, hdcRows, assign, sr);
+  }).join('');
 
   const tipAttr = (key) => (METRIC_TIPS[key] ? { 'data-tip': METRIC_TIPS[key] } : {});
 
@@ -86,7 +90,7 @@ export default function ExplorerTab() {
     if (tr) openDeepDive(tr.getAttribute('data-show'));
   }
 
-  const colspan = hdcRows ? 9 : 7;
+  const colspan = hdcRows ? 10 : 8;
 
   return (
     <div>
@@ -166,6 +170,7 @@ export default function ExplorerTab() {
               <th {...tipAttr('users')}>Users</th>
               {hdcRows && <th {...tipAttr('hdc_rate')}>HDC rate (7d)</th>}
               {hdcRows && <th {...tipAttr('mode_label')}>Most-common label (7d)</th>}
+              <th {...tipAttr('success_rate')}>Success rate (7d)</th>
               <th {...tipAttr('fatigue_lens')}>Fatigue lens</th>
               <th {...tipAttr('unified')}>Unified call</th>
             </tr>
