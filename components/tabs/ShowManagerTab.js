@@ -199,25 +199,20 @@ export default function ShowManagerTab() {
     return `${dt.toLocaleString('en-US', { month: 'long' })} ${dt.getFullYear()}`;
   };
 
-  // An experiment is "in the period" when its lifespan overlaps the window.
-  const inPeriod = (e) => {
-    if (!win.start || !win.end) return false;
-    if (!e.claimedAt || e.claimedAt > win.end) return false;
-    return e.concludedAt == null || e.concludedAt >= win.start;
-  };
-  const within = (d) => d && d >= win.start && d <= win.end;
-
-  // Scoped aggregate for one POC over the selected period.
+  // Aggregate for one POC over ALL of their experiments (active + concluded
+  // history) — NOT period-scoped, so nothing is lost. The week/month selector
+  // only drives the window-based HDC-rate / success-rate metrics in the
+  // "Shows managed" view, not the experiment list or these counts.
   const scopedFor = (name) => {
-    const exps = experiments.filter((e) => e.by === name && inPeriod(e));
-    const shows = new Set(exps.map((e) => e.showId));
-    const pickedUp = exps.filter((e) => within(e.claimedAt)).length;
-    const concludedInP = exps.filter((e) => e.concluded && within(e.concludedAt));
-    const reached = concludedInP.filter((e) => e.verdict === 'reached').length;
-    const failed = concludedInP.filter((e) => e.verdict === 'failed').length;
+    const exps = experiments.filter((e) => e.by === name);
+    const shows = new Set(exps.map((e) => e.showId).filter(Boolean));
+    const pickedUp = exps.length;
+    const concludedExps = exps.filter((e) => e.concluded);
+    const reached = concludedExps.filter((e) => e.verdict === 'reached').length;
+    const failed = concludedExps.filter((e) => e.verdict === 'failed').length;
     const active = exps.filter((e) => !e.concluded).length;
     const n = reached + failed;
-    return { exps, shows, pickedUp, concluded: concludedInP.length, reached, failed, active, win: n ? Math.round((reached / n) * 100) : null };
+    return { exps, shows, pickedUp, concluded: concludedExps.length, reached, failed, active, win: n ? Math.round((reached / n) * 100) : null };
   };
 
   if (!actionsConfigured) {
@@ -268,7 +263,7 @@ export default function ShowManagerTab() {
     return (
       <div>
         {header}
-        <p className="text-sm text-slate-500 mb-3">Showing <b>{periodLabel(selPeriod)}</b>. Click a manager to drill in.</p>
+        <p className="text-sm text-slate-500 mb-3">Experiment counts are all-time (incl. concluded history); HDC/SR metrics use <b>{periodLabel(selPeriod)}</b>. Click a manager to drill in.</p>
         <div className="card overflow-x-auto">
           <table className="data-table">
             <thead>
@@ -348,7 +343,10 @@ export default function ShowManagerTab() {
     ['Avg HDC rate', avgHdc == null ? '—' : avgHdc + '%'],
     ['Avg success rate', avgSr == null ? '—' : avgSr + '%'],
     ['Picked up', g.pickedUp],
+    ['Active', g.active],
     ['Concluded', g.concluded],
+    ['Reached', g.reached],
+    ['Failed', g.failed],
     ['Experiment success %', g.win == null ? '—' : g.win + '%'],
     ['New shows picked up', nseKpis.pickedUp],
     ['Successful launches', nseKpis.launches],
@@ -383,8 +381,8 @@ export default function ShowManagerTab() {
         <div className="px-4 pt-3 flex items-center justify-between gap-2 flex-wrap">
           <div className="text-sm font-semibold">
             {detailView === 'nse' ? 'New show experiments' : detailView === 'shows' ? 'Shows managed' : 'Experiments'}
-            {detailView !== 'nse' && <> — {periodLabel(selPeriod)}</>}
-            <span className="hint"> ({detailView === 'nse' ? 'all new-show launch experiments owned by this manager' : detailView === 'shows' ? 'HDC rate & success rate over the window' : 'one row per experiment'})</span>
+            {detailView === 'shows' && <> — {periodLabel(selPeriod)}</>}
+            <span className="hint"> ({detailView === 'nse' ? 'all new-show launch experiments owned by this manager' : detailView === 'shows' ? 'HDC rate & success rate over the window' : 'all experiments owned by this manager (incl. concluded history)'})</span>
           </div>
           <div className="inline-flex rounded-md border border-slate-300 overflow-hidden text-xs">
             {[['experiments', 'Experiments'], ['shows', 'Shows managed'], ['nse', 'New show experiments']].map(([k, label]) => (
@@ -493,7 +491,7 @@ export default function ShowManagerTab() {
                   </tr>
                 );
               }) : (
-                <tr><td colSpan={7} className="text-center text-slate-400 py-6">No experiments for {manager} in {periodLabel(selPeriod)}.</td></tr>
+                <tr><td colSpan={7} className="text-center text-slate-400 py-6">No experiments owned by {manager} yet.</td></tr>
               )}
             </tbody>
           </table>
