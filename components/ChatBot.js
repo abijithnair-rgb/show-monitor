@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { buildContext } from '@/lib/buildContext';
+import { buildDataset } from '@/lib/buildDataset';
 
 const BOT_NAME = 'Show Master';
 const TAGLINE = 'Lifecycle × fatigue, reconciled.';
@@ -152,11 +152,11 @@ export default function ChatBot() {
     setLoading(true);
     setError(null);
     try {
-      const context = buildContext(useStore.getState().data());
+      const dataset = buildDataset(useStore.getState().data());
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: next, context }),
+        body: JSON.stringify({ messages: next, dataset }),
       });
       const ct = res.headers.get('content-type') || '';
       // Error responses come back as JSON with a proper status.
@@ -165,28 +165,33 @@ export default function ChatBot() {
         setError(json.error || `Request failed (HTTP ${res.status}).`);
         return;
       }
-      // Stream the reply token-by-token into a growing assistant bubble.
-      setMessages((m) => [...m, { role: 'assistant', content: '' }]);
-      setLoading(false);
+      // The bot may run several tool rounds before answering; keep the typing
+      // indicator until the first byte of the final answer arrives, then stream
+      // it into a growing assistant bubble.
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let acc = '';
+      let started = false;
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         acc += decoder.decode(value, { stream: true });
-        setMessages((m) => {
-          const copy = [...m];
-          copy[copy.length - 1] = { role: 'assistant', content: acc };
-          return copy;
-        });
+        if (!acc) continue;
+        if (!started) {
+          started = true;
+          setLoading(false);
+          setMessages((m) => [...m, { role: 'assistant', content: acc }]);
+        } else {
+          setMessages((m) => {
+            const copy = [...m];
+            copy[copy.length - 1] = { role: 'assistant', content: acc };
+            return copy;
+          });
+        }
       }
-      if (!acc.trim()) {
-        setMessages((m) => {
-          const copy = [...m];
-          copy[copy.length - 1] = { role: 'assistant', content: '(empty response)' };
-          return copy;
-        });
+      if (!started) {
+        setLoading(false);
+        setMessages((m) => [...m, { role: 'assistant', content: '(empty response)' }]);
       }
     } catch (e) {
       setError(e.message || 'Network error.');
