@@ -1,12 +1,12 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildModel } from '@/lib/model';
 import { fmtDate } from '@/lib/format';
 import { POCS, canManageClaim, isManager, EXPERIMENT_MAX_DAYS } from '@/lib/ownership';
 import {
   GROUP_SCOPES, scopeMetaLabel, scopeOptions, scopeShows, scopeValueLabel,
-  categoryValues, categoryLanguageValues, makeCategoryScopeValue, parseCategoryScopeValue,
+  categoryValues, makeCategoryScopeValue, parseCategoryScopeValue,
   GROUP_METRICS, groupMetric, groupMetricLabel,
   groupLiveSnapshot, liveMetricValue,
   makeGroupTarget, defaultGroupOp, groupTargetText, groupMetricKeyOfTarget,
@@ -27,6 +27,50 @@ const fmtVal = (key, v) => {
   if (v == null) return '—';
   return groupMetric(key)?.unit === '%' ? `${v}%` : v.toLocaleString('en-IN');
 };
+
+// Searchable single-select dropdown. `options` is [{ value, label }]; calls
+// onChange(value) on pick. Used for the (potentially long) category list.
+function SearchSelect({ value, options, onChange, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+  const sel = options.find((o) => o.value === value);
+  const ql = q.trim().toLowerCase();
+  const filtered = ql ? options.filter((o) => o.label.toLowerCase().includes(ql)) : options;
+  return (
+    <div className="relative" ref={ref}>
+      <button type="button"
+        className="border border-slate-300 rounded-md px-2 py-1.5 text-sm text-slate-800 text-left min-w-[180px] flex items-center justify-between gap-2"
+        onClick={() => { setOpen((o) => !o); setQ(''); }}>
+        <span className="truncate">{sel ? sel.label : (placeholder || 'select…')}</span>
+        <span className="text-slate-400">▾</span>
+      </button>
+      {open && (
+        <div className="absolute z-40 top-full mt-1 w-64 bg-white border border-slate-300 rounded-md shadow-lg">
+          <div className="p-1 border-b border-slate-100">
+            <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…"
+              className="w-full border border-slate-200 rounded px-2 py-1 text-sm" />
+          </div>
+          <div className="max-h-56 overflow-y-auto p-1">
+            {filtered.length ? filtered.map((o) => (
+              <button type="button" key={o.value}
+                className={'w-full text-left px-2 py-1 text-sm rounded hover:bg-slate-50 ' + (o.value === value ? 'bg-slate-100 font-medium' : 'text-slate-700')}
+                onClick={() => { onChange(o.value); setOpen(false); }}>
+                {o.label}
+              </button>
+            )) : <div className="px-2 py-2 text-xs text-slate-400">No matches</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ---- Pick-up form for one metric box ----
 function GroupPickupForm({ scope, scopeValue, metricKey, snapshot, onClose, onSaved }) {
@@ -225,10 +269,11 @@ export function AddGroupExperimentModal({ onClose }) {
     return map;
   }, [groupActions, scope, scopeValue]);
 
-  // Category scope is two-level: a category + an optional language bifurcation.
+  // Category scope is two-level: pick a language first (or "All languages"),
+  // then the category within it. The stored value stays "category" / "category::lang".
   const catSel = parseCategoryScopeValue(scopeValue);
-  const catOptions = scope === 'category' ? categoryValues(model) : [];
-  const catLangOptions = scope === 'category' ? categoryLanguageValues(model, catSel.category) : [];
+  const catLangOptions = scope === 'category' ? scopeOptions(model, 'language') : [];
+  const catOptions = scope === 'category' ? categoryValues(model, catSel.lang) : [];
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 overflow-y-auto py-10" onClick={onClose}>
@@ -257,15 +302,6 @@ export function AddGroupExperimentModal({ onClose }) {
           {scope === 'category' ? (
             <>
               <label className="text-xs text-slate-500 flex flex-col gap-1">
-                Category
-                <select className="border border-slate-300 rounded-md px-2 py-1.5 text-sm text-slate-800"
-                  value={catSel.category}
-                  onChange={(e) => setScopeValue(makeCategoryScopeValue(e.target.value, ''))}>
-                  {!catOptions.length && <option value="">no data</option>}
-                  {catOptions.map((o) => <option key={o.value} value={o.value}>{o.label} ({o.n})</option>)}
-                </select>
-              </label>
-              <label className="text-xs text-slate-500 flex flex-col gap-1">
                 Language
                 <select className="border border-slate-300 rounded-md px-2 py-1.5 text-sm text-slate-800"
                   value={catSel.lang || ''}
@@ -273,6 +309,14 @@ export function AddGroupExperimentModal({ onClose }) {
                   <option value="">All languages</option>
                   {catLangOptions.map((o) => <option key={o.value} value={o.value}>{o.label} ({o.n})</option>)}
                 </select>
+              </label>
+              <label className="text-xs text-slate-500 flex flex-col gap-1">
+                Category
+                <SearchSelect
+                  value={catSel.category}
+                  options={catOptions.map((o) => ({ value: o.value, label: `${o.label} (${o.n})` }))}
+                  placeholder="Search category…"
+                  onChange={(cat) => setScopeValue(makeCategoryScopeValue(cat, catSel.lang))} />
               </label>
             </>
           ) : (
