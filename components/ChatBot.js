@@ -5,6 +5,8 @@ import { buildDataset } from '@/lib/buildDataset';
 
 const BOT_NAME = 'Show Master';
 const TAGLINE = 'Lifecycle × fatigue, reconciled.';
+// Matches the server's CLEAR control token (preamble-discard signal).
+const CLEAR = '\u0000\u0000CLR\u0000\u0000';
 
 // First-touch quick picks help the bot scope to the user's slice.
 const SUGGESTIONS = [
@@ -136,10 +138,11 @@ export default function ChatBot() {
     };
   }, [open, hasChatted]);
 
-  // auto-scroll to latest
+  // Scroll to the latest only when a NEW bubble is added (or chat opens / a turn
+  // starts) — NOT on every streamed token, so the view stays put while the bot types.
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages, loading, open]);
+  }, [messages.length, loading, open]);
 
   async function send(text) {
     const content = (text ?? input).trim();
@@ -186,6 +189,8 @@ export default function ChatBot() {
         const { done, value } = await reader.read();
         if (done) break;
         acc += decoder.decode(value, { stream: true });
+        // CLEAR sentinel: drop narrated preamble that preceded a tool call.
+        if (acc.includes(CLEAR)) acc = acc.slice(acc.lastIndexOf(CLEAR) + CLEAR.length);
         if (!acc) continue;
         if (!started) {
           started = true;

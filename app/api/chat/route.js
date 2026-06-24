@@ -6,6 +6,9 @@ export const runtime = 'nodejs';
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
 const MAX_ROUNDS = 8;
 const MAX_TOOL_CHARS = 6000;
+// Control token: tells the client to discard any preamble streamed so far
+// (emitted when the model narrates before a tool call). Must not occur in prose.
+const CLEAR = '\u0000\u0000CLR\u0000\u0000';
 
 // ---------------------------------------------------------------------------
 // Lean analyst prompt — the bot pulls real numbers via tools, never from a
@@ -260,24 +263,30 @@ export async function POST(req) {
   const encoder = new TextEncoder();
   const convo = [...apiMessages];
 
-  // Consume one streamed turn: assemble the assistant content blocks
-  // (text + tool_use) and the stop reason. Text is buffered (NOT forwarded) so
-  // that "thinking out loud" preamble in tool-use turns is never shown — only
-  // the final, tool-free answer is emitted to the client.
-  async function consumeTurn(stream) {
+  // Consume one streamed turn: forward text tokens to the client LIVE (so the
+  // bot types as it generates), assemble the assistant content blocks, and
+  // report the stop reason. If the model narrates before calling a tool, that
+  // preamble is streamed then retracted via a CLEAR sentinel the moment a
+  // tool_use block begins — so the user only ever keeps the final answer.
+  async function consumeTurn(stream, controller) {
     const blockState = new Map();
     let stopReason = null;
+    let streamedText = false;
+    let cleared = false;
     for await (const ev of stream) {
       if (ev.type === 'content_block_start') {
         const cb = ev.content_block;
-        blockState.set(ev.index, cb.type === 'tool_use'
-          ? { type: 'tool_use', id: cb.id, name: cb.name, json: '' }
-          : { type: 'text', text: '' });
+        if (cb.type === 'tool_use') {
+          blockState.set(ev.index, { type: 'tool_use', id: cb.id, name: cb.name, json: '' });
+          if (streamedText && !cleared) { controller.enqueue(encoder.encode(CLEAR)); cleared = true; }
+        } else {
+          blockState.set(ev.index, { type: 'text', text: '' });
+        }
       } else if (ev.type === 'content_block_delta') {
         const st = blockState.get(ev.index);
         if (!st) continue;
-        if (ev.delta.type === 'text_delta') st.text += ev.delta.text;
-        else if (ev.delta.type === 'input_json_delta') st.json += ev.delta.partial_json;
+        if (ev.delta.type === 'text_delta') { st.text += ev.delta.text; controller.enqueue(encoder.encode(ev.delta.text)); streamedText = true; }
+        else if (ev.delta.type === 'input_json_delta') { st.json += ev.delta.partial_json; }
       } else if (ev.type === 'message_delta') {
         if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason;
       }
@@ -290,8 +299,7 @@ export async function POST(req) {
       }
       return { type: 'text', text: st.text };
     });
-    const text = content.filter((b) => b.type === 'text').map((b) => b.text).join('');
-    return { content, stopReason, text };
+    return { content, stopReason };
   }
 
   const textStream = new ReadableStream({
@@ -299,13 +307,10 @@ export async function POST(req) {
       try {
         let stream = firstStream;
         for (let round = 0; round < MAX_ROUNDS; round++) {
-          const { content, stopReason, text } = await consumeTurn(stream);
+          const { content, stopReason } = await consumeTurn(stream, controller);
 
-          // Final (tool-free) turn → emit the answer and stop.
-          if (stopReason !== 'tool_use' || !hasData) {
-            if (text) controller.enqueue(encoder.encode(text));
-            break;
-          }
+          // Final (tool-free) turn — its text was already streamed live. Stop.
+          if (stopReason !== 'tool_use' || !hasData) break;
 
           // Run the requested tools, append assistant turn + tool results, loop.
           convo.push({ role: 'assistant', content });
