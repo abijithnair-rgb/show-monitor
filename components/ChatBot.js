@@ -153,10 +153,20 @@ export default function ChatBot() {
     setError(null);
     try {
       const dataset = buildDataset(useStore.getState().data());
+      const json = JSON.stringify({ messages: next, dataset });
+      // Gzip the body (the dataset can be several MB) so it stays under the host's
+      // request-size limit. Falls back to plain JSON where CompressionStream is absent.
+      let reqBody = json;
+      if (typeof CompressionStream !== 'undefined') {
+        try {
+          const stream = new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'));
+          reqBody = await new Response(stream).arrayBuffer();
+        } catch { reqBody = json; }
+      }
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: next, dataset }),
+        body: reqBody,
       });
       const ct = res.headers.get('content-type') || '';
       // Error responses come back as JSON with a proper status.

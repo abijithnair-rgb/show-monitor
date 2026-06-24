@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { gunzipSync } from 'zlib';
 
 export const runtime = 'nodejs';
 
@@ -221,8 +222,15 @@ export async function POST(req) {
     return Response.json({ error: 'ANTHROPIC_API_KEY is not set on the server. Add it to .env.local and restart.' }, { status: 500 });
   }
 
+  // The client gzips the (potentially multi-MB) dataset payload to stay under the
+  // host's request-body limit. Detect gzip by magic bytes (robust whether or not
+  // the platform already decompressed it) and fall back to plain JSON.
   let body;
-  try { body = await req.json(); } catch { return Response.json({ error: 'Invalid JSON body.' }, { status: 400 }); }
+  try {
+    const raw = Buffer.from(await req.arrayBuffer());
+    const text = raw.length >= 2 && raw[0] === 0x1f && raw[1] === 0x8b ? gunzipSync(raw).toString('utf8') : raw.toString('utf8');
+    body = JSON.parse(text);
+  } catch { return Response.json({ error: 'Invalid request body.' }, { status: 400 }); }
 
   const messages = Array.isArray(body?.messages) ? body.messages : null;
   if (!messages || !messages.length) {
