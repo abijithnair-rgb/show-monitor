@@ -275,6 +275,14 @@ export function AddGroupExperimentModal({ onClose }) {
   const catLangOptions = scope === 'category' ? scopeOptions(model, 'language') : [];
   const catOptions = scope === 'category' ? categoryValues(model, catSel.lang) : [];
 
+  // Switching language keeps the current category if it exists in that language,
+  // otherwise lands on the first category available there (never reverts language).
+  const onPickLanguage = (lang) => {
+    const cats = categoryValues(model, lang);
+    const cat = cats.some((c) => c.value === catSel.category) ? catSel.category : (cats[0]?.value || catSel.category);
+    setScopeValue(makeCategoryScopeValue(cat, lang));
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 overflow-y-auto py-10" onClick={onClose}>
       <div className="card p-5 w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
@@ -305,7 +313,7 @@ export function AddGroupExperimentModal({ onClose }) {
                 Language
                 <select className="border border-slate-300 rounded-md px-2 py-1.5 text-sm text-slate-800"
                   value={catSel.lang || ''}
-                  onChange={(e) => setScopeValue(makeCategoryScopeValue(catSel.category, e.target.value))}>
+                  onChange={(e) => onPickLanguage(e.target.value)}>
                   <option value="">All languages</option>
                   {catLangOptions.map((o) => <option key={o.value} value={o.value}>{o.label} ({o.n})</option>)}
                 </select>
