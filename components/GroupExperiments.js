@@ -6,6 +6,7 @@ import { fmtDate } from '@/lib/format';
 import { POCS, canManageClaim, isManager, EXPERIMENT_MAX_DAYS } from '@/lib/ownership';
 import {
   GROUP_SCOPES, scopeMetaLabel, scopeOptions, scopeShows, scopeValueLabel,
+  categoryValues, categoryLanguageValues, makeCategoryScopeValue, parseCategoryScopeValue,
   GROUP_METRICS, groupMetric, groupMetricLabel,
   groupLiveSnapshot, liveMetricValue,
   makeGroupTarget, defaultGroupOp, groupTargetText, groupMetricKeyOfTarget,
@@ -224,6 +225,11 @@ export function AddGroupExperimentModal({ onClose }) {
     return map;
   }, [groupActions, scope, scopeValue]);
 
+  // Category scope is two-level: a category + an optional language bifurcation.
+  const catSel = parseCategoryScopeValue(scopeValue);
+  const catOptions = scope === 'category' ? categoryValues(model) : [];
+  const catLangOptions = scope === 'category' ? categoryLanguageValues(model, catSel.category) : [];
+
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 overflow-y-auto py-10" onClick={onClose}>
       <div className="card p-5 w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
@@ -231,7 +237,7 @@ export function AddGroupExperimentModal({ onClose }) {
           <div>
             <h2 className="text-lg font-semibold mb-1">Add a group experiment</h2>
             <p className="text-sm text-slate-500">
-              Move a whole language, business unit or POC — pick up an experiment on any movement metric (L0–L5, success rate, supply).
+              Move a whole language, business unit, category (optionally one language of it) or POC — pick up an experiment on any movement metric (L0–L5, success rate, supply).
             </p>
           </div>
           <button className="text-slate-400 hover:text-slate-700 text-xl leading-none" onClick={onClose} aria-label="Close">×</button>
@@ -248,14 +254,37 @@ export function AddGroupExperimentModal({ onClose }) {
               </button>
             ))}
           </div>
-          <label className="text-xs text-slate-500 flex flex-col gap-1">
-            {scopeMetaLabel(scope)}
-            <select className="border border-slate-300 rounded-md px-2 py-1.5 text-sm text-slate-800"
-              value={scopeValue} onChange={(e) => setScopeValue(e.target.value)}>
-              {!options.length && <option value="">no data</option>}
-              {options.map((o) => <option key={o.value} value={o.value}>{o.label} ({o.n})</option>)}
-            </select>
-          </label>
+          {scope === 'category' ? (
+            <>
+              <label className="text-xs text-slate-500 flex flex-col gap-1">
+                Category
+                <select className="border border-slate-300 rounded-md px-2 py-1.5 text-sm text-slate-800"
+                  value={catSel.category}
+                  onChange={(e) => setScopeValue(makeCategoryScopeValue(e.target.value, ''))}>
+                  {!catOptions.length && <option value="">no data</option>}
+                  {catOptions.map((o) => <option key={o.value} value={o.value}>{o.label} ({o.n})</option>)}
+                </select>
+              </label>
+              <label className="text-xs text-slate-500 flex flex-col gap-1">
+                Language
+                <select className="border border-slate-300 rounded-md px-2 py-1.5 text-sm text-slate-800"
+                  value={catSel.lang || ''}
+                  onChange={(e) => setScopeValue(makeCategoryScopeValue(catSel.category, e.target.value))}>
+                  <option value="">All languages</option>
+                  {catLangOptions.map((o) => <option key={o.value} value={o.value}>{o.label} ({o.n})</option>)}
+                </select>
+              </label>
+            </>
+          ) : (
+            <label className="text-xs text-slate-500 flex flex-col gap-1">
+              {scopeMetaLabel(scope)}
+              <select className="border border-slate-300 rounded-md px-2 py-1.5 text-sm text-slate-800"
+                value={scopeValue} onChange={(e) => setScopeValue(e.target.value)}>
+                {!options.length && <option value="">no data</option>}
+                {options.map((o) => <option key={o.value} value={o.value}>{o.label} ({o.n})</option>)}
+              </select>
+            </label>
+          )}
           {scopeValue && (
             <span className="hint pb-1.5">
               {snapshot.shows} show{snapshot.shows === 1 ? '' : 's'} · {snapshot.activeShows} publishing in the last 7 days
