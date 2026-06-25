@@ -33,7 +33,9 @@ export default function ExperimentsTab() {
   const groupActions = useStore((s) => s.groupActions);
   const actionsConfigured = useStore((s) => s.actionsConfigured);
   const openDeepDive = useStore((s) => s.openDeepDive);
-  const [poc, setPoc] = useState('');
+  // POC filter lives in the store so it survives navigating into a Deep Dive and back.
+  const poc = useStore((s) => s.expPoc);
+  const setPoc = useStore((s) => s.setExpPoc);
   const [showAdd, setShowAdd] = useState(false);
 
   const model = useMemo(() => buildModel(data), [data]);

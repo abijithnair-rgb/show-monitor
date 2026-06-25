@@ -46,6 +46,10 @@ export const useStore = create((set, get) => ({
   // page refresh). Deliberately NOT persisted to IndexedDB.
   aqFilters: { search: '', sortBy: 'overdue', language: '', status: '', bu: '', category: '', recommendation: '', reason: '', confidence: '', fixArea: '', manager: '' },
 
+  // Experiments tab "Filter by POC" — in-memory so it survives navigating into a
+  // Deep Dive and back (reset only on a full page refresh).
+  expPoc: '',
+
   // ---- derived ----
   hasData: () => !!(get().evalRows || get().fatRows),
   data: () => {
@@ -86,6 +90,7 @@ export const useStore = create((set, get) => ({
   setDeepLang: (deepLang) => set({ deepLang }),
   openDeepDive: (id) => { set({ deepDiveId: id, tab: 'deep' }); const s = get(); s._recordNav({ tab: 'deep', deepDiveId: id, deepLang: s.deepLang }); },
   setAqFilter: (key, value) => set((st) => ({ aqFilters: { ...st.aqFilters, [key]: value } })),
+  setExpPoc: (expPoc) => set({ expPoc }),
   resetAqFilters: () => set({ aqFilters: { search: '', sortBy: 'overdue', language: '', status: '', bu: '', category: '', recommendation: '', reason: '', confidence: '', fixArea: '', manager: '' } }),
 
   // All active experiments for a show (sorted oldest-first; [0] = "primary").
