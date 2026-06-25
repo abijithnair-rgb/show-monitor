@@ -6,7 +6,7 @@ import {
   METRIC_OPTIONS, metricLabel, reviewDue, todayStr,
   evalVerdict, VERDICT_META, progressLine, sincePickupParts,
   LABEL_BANDS, LABEL_MAX, EXPERIMENT_MAX_DAYS, labelDefaultOp, makeLabelTarget, makeFrequencyTarget, FREQ_MIN, FREQ_MAX, impliedTarget,
-  targetText, trackedValueText, POCS, canManageClaim,
+  targetText, trackedValueText, POCS, canManageClaim, isManager,
   cleanConstraints, evalConstraints,
 } from '@/lib/ownership';
 import { ConstraintEditor, ConstraintChips } from '@/components/ConstraintControls';
@@ -93,8 +93,10 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
   function onMetricChange(m) { setMetric(m); }
   function onBandChange(b) { setLabelBand(b); setLabelOp(labelDefaultOp(b)); }
 
-  // Owner OR a manager may edit/conclude/discard this experiment.
+  // Owner OR a manager may edit/conclude this experiment, but only a manager
+  // (Deepak) may DISCARD it — POCs cannot discard their own experiments.
   const canManage = canManageClaim(claim, userName);
+  const canDiscard = isManager(userName);
   const manageByManager = canManage && claim && claim.by !== userName; // editing someone else's
   const verdict = claim ? evalVerdict(claim, snapshotNow) : null;
   const vMeta = verdict ? VERDICT_META[verdict] : null;
@@ -363,7 +365,7 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
                   <button className="text-slate-700 font-medium hover:underline disabled:opacity-50" disabled={busy} onClick={() => setConcluding(true)}>Conclude → save to history</button>
                 </>
               )}
-              <button className="text-slate-400 hover:text-slate-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => run(() => releaseShow(claim.id))}>Discard</button>
+              {canDiscard && <button className="text-slate-400 hover:text-slate-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => run(() => releaseShow(claim.id))}>Discard</button>}
             </div>
           )}
           {canManage && concluding && (
