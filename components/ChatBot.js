@@ -117,23 +117,21 @@ export default function ChatBot() {
     autosize(inputRef.current);
   }, [input]);
 
-  // periodic peek-out greetings (first at 8s, then every 2 min; visible 7s each)
+  // Single peek-out greeting ~8s after opening the tool (visible 7s), shown only
+  // once per session — peekIdx guards against re-showing if the chat is toggled.
   useEffect(() => {
-    if (open || hasChatted) {
+    if (open || hasChatted || peekIdx.current > 0) {
       setPeek(null);
       return;
     }
     let hideT;
-    const show = () => {
-      setPeek(PEEK_MESSAGES[peekIdx.current % PEEK_MESSAGES.length]);
+    const first = setTimeout(() => {
+      setPeek(PEEK_MESSAGES[0]);
       peekIdx.current += 1;
       hideT = setTimeout(() => setPeek(null), 7000);
-    };
-    const first = setTimeout(show, 8000);
-    const iv = setInterval(show, 120000);
+    }, 8000);
     return () => {
       clearTimeout(first);
-      clearInterval(iv);
       clearTimeout(hideT);
     };
   }, [open, hasChatted]);
