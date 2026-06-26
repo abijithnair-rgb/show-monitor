@@ -11,6 +11,16 @@ const todayStr = () => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
 
+// Does a signed-in user own this experiment's show-manager slot? Case-insensitive,
+// with a first-name-token fallback (so "Kartikey" / "kartikey" / "Kartikey Nair" match).
+const firstTok = (s) => String(s || '').trim().toLowerCase().split(/\s+/)[0] || '';
+const sameOwner = (recManager, userName) => {
+  const a = String(recManager || '').trim().toLowerCase();
+  const b = String(userName || '').trim().toLowerCase();
+  if (!a || !b) return false;
+  return a === b || firstTok(a) === b || a === firstTok(b) || firstTok(a) === firstTok(b);
+};
+
 // chip class for a final verdict.
 function verdictChip(v) {
   if (!v) return 'chip-grey';
@@ -506,13 +516,20 @@ export default function NewShowExperimentsTab() {
                     <div className="flex flex-col items-start gap-1">
                       {(() => {
                         const failed = isNseFailed(v.effectiveVerdict);
+                        const owner = sameOwner(rec.manager, userName);
+                        const canConclude = failed && owner;
+                        const title = !failed
+                          ? 'Only failed experiments can be concluded'
+                          : !owner
+                            ? `Only ${rec.manager || 'the show manager'} can conclude this experiment`
+                            : 'Conclude → save to history';
                         return (
                           <button
-                            className={'text-xs ' + (failed ? 'text-slate-700 font-medium hover:underline' : 'text-slate-300 cursor-not-allowed')}
-                            disabled={!failed || concludingId === rec.id}
-                            title={failed ? 'Conclude → save to history' : 'Only failed experiments can be concluded'}
+                            className={'text-xs ' + (canConclude ? 'text-slate-700 font-medium hover:underline' : 'text-slate-300 cursor-not-allowed')}
+                            disabled={!canConclude || concludingId === rec.id}
+                            title={title}
                             onClick={async () => {
-                              if (!failed) return;
+                              if (!canConclude) return;
                               setConcludingId(rec.id);
                               try { await concludeNseExperiment(rec.id, v.effectiveVerdict); } finally { setConcludingId(null); }
                             }}
