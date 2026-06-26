@@ -3,7 +3,7 @@ import { idbSet, idbGet, idbDel } from '@/lib/idb';
 import { sampleData } from '@/lib/sample';
 import { fetchSheets, fetchRemote, remoteStatus } from '@/lib/remote';
 import { fetchActions, claimAction, updateClaim, archiveAction, releaseAction, setManagerAction } from '@/lib/actions';
-import { fetchNse, createNse, extendNse, setNseManagerVerdict, setNseShowId, setNseStatus, deleteNse } from '@/lib/nse';
+import { fetchNse, createNse, extendNse, concludeNse, setNseManagerVerdict, setNseShowId, setNseStatus, deleteNse } from '@/lib/nse';
 import { fetchGroups, claimGroup, updateGroup, archiveGroup, releaseGroup } from '@/lib/groups';
 
 // Global app state (replaces the original mutable `state` object).
@@ -23,7 +23,7 @@ export const useStore = create((set, get) => ({
   actions: {}, history: {}, managers: {}, actionsConfigured: false, userName: '',
 
   // New Show Experiments board (Vercel KV). nse = { experimentId: record }.
-  nse: {}, nseConfigured: false,
+  nse: {}, nseHistory: {}, nseConfigured: false,
 
   // Group-experiment board (Vercel KV). groupActions = { experimentId: claim }
   // (scope = language/bu/poc); groupHistory = { "scope:value": [concluded] }.
@@ -248,8 +248,8 @@ export const useStore = create((set, get) => ({
   // ---- New Show Experiments board (Vercel KV) ----
   loadNse: async () => {
     try {
-      const { configured, nse } = await fetchNse();
-      set({ nseConfigured: !!configured, nse: nse || {} });
+      const { configured, nse, nseHistory } = await fetchNse();
+      set({ nseConfigured: !!configured, nse: nse || {}, nseHistory: nseHistory || {} });
     } catch {
       set({ nseConfigured: false });
     }
@@ -265,10 +265,21 @@ export const useStore = create((set, get) => ({
     get().applyNse(id, record);
     return record;
   },
-  extendNseExperiment: async (id, review_date2) => {
-    const { record } = await extendNse(id, review_date2);
+  extendNseExperiment: async (id, review_date2, extend_count, manager_remark) => {
+    const { record } = await extendNse(id, review_date2, extend_count, manager_remark);
     get().applyNse(id, record);
     return record;
+  },
+  // Conclude a FAILED experiment → archive to history, drop from the active board.
+  concludeNseExperiment: async (id, final_verdict) => {
+    const { concluded } = await concludeNse(id, final_verdict, get().userName);
+    set((st) => {
+      const nse = { ...st.nse }; delete nse[String(id)];
+      const nseHistory = { ...st.nseHistory };
+      if (concluded) nseHistory[String(concluded.id ?? id)] = concluded;
+      return { nse, nseHistory };
+    });
+    return concluded;
   },
   setNseManagerVerdict: async (id, verdict, remark) => {
     const { record } = await setNseManagerVerdict(id, verdict, remark);

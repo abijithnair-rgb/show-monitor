@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { buildModel, buildFatIndex } from '@/lib/model';
 import { ROSTER, isManager } from '@/lib/ownership';
-import { computeNseVerdict, V, MANAGER_VERDICTS } from '@/lib/nseVerdict';
+import { computeNseVerdict, V, isNseFailed } from '@/lib/nseVerdict';
 import { fmtDate, LANG_NAMES } from '@/lib/format';
 
 const todayStr = () => {
@@ -110,18 +110,9 @@ function AddShowPanel({ categories, onClose }) {
   );
 }
 
-// --- Final-verdict cell (verdict chip, tags, extend control) ---
-function VerdictCell({ rec, v }) {
-  const extendNseExperiment = useStore((s) => s.extendNseExperiment);
-  const [open, setOpen] = useState(false);
-  const [d, setD] = useState('');
-  const [busy, setBusy] = useState(false);
+// --- Final-verdict cell (verdict chip + tags; override is a separate button) ---
+function VerdictCell({ v }) {
   const verdict = v.effectiveVerdict;
-  const doExtend = async () => {
-    if (!d) return;
-    setBusy(true);
-    try { await extendNseExperiment(rec.id, d); setOpen(false); } finally { setBusy(false); }
-  };
   return (
     <div className="flex flex-col gap-1">
       <span className={'chip ' + verdictChip(verdict)}>{verdict || 'Tracking'}</span>
@@ -130,50 +121,79 @@ function VerdictCell({ rec, v }) {
           {v.tags.map((t) => <span key={t} className={'chip ' + tagChip(t)}>{t}</span>)}
         </div>
       )}
-      {v.canExtend && (
-        open ? (
-          <div className="flex items-center gap-1 mt-1">
-            <input type="date" className="border border-slate-300 rounded-md px-1.5 py-1 text-xs" value={d} onChange={(e) => setD(e.target.value)} />
-            <button className="btn btn-primary btn-xs" onClick={doExtend} disabled={busy}>{busy ? '…' : 'Go'}</button>
-            <button className="text-slate-400 text-xs underline" onClick={() => setOpen(false)}>cancel</button>
-          </div>
-        ) : (
-          <button className="text-xs text-blue-600 underline self-start mt-0.5" onClick={() => setOpen(true)}>Extend (+5 videos)</button>
-        )
-      )}
     </div>
   );
 }
 
-// --- Manager (Deepak) verdict cell ---
-function ManagerVerdictCell({ rec }) {
+// --- Override-verdict modal (Deepak): centered popup with verdict / remark /
+// new review date. "Continue experiment with 5 more videos" = extend (sets a new
+// review date and reverts to Tracking once the next video lands); Replace/Promote
+// are sticky manager overrides; "Use system verdict" clears the override. ---
+function OverrideVerdictModal({ rec, v, onClose }) {
+  const extendNseExperiment = useStore((s) => s.extendNseExperiment);
   const setNseManagerVerdict = useStore((s) => s.setNseManagerVerdict);
-  const [verdict, setVerdict] = useState(rec.manager_verdict || '');
+  const canContinue = !rec.extended; // extend only available pre-extension (max 10 videos)
+  const initial = rec.manager_verdict && rec.manager_verdict !== V.CONTINUE_5 ? rec.manager_verdict : '';
+  const [choice, setChoice] = useState(initial);
   const [remark, setRemark] = useState(rec.manager_remark || '');
+  const [reviewDate, setReviewDate] = useState('');
   const [busy, setBusy] = useState(false);
-  const save = async (nextV, nextR) => {
+  const [err, setErr] = useState('');
+
+  const OPTIONS = [
+    { value: '', label: 'Use system verdict (clear override)' },
+    { value: V.REPLACE, label: V.REPLACE },
+    ...(canContinue ? [{ value: V.CONTINUE_5, label: V.CONTINUE_5 }] : []),
+    { value: V.PROMOTE, label: V.PROMOTE },
+  ];
+  const isContinue = choice === V.CONTINUE_5;
+
+  const submit = async () => {
+    setErr('');
+    if (isContinue && !reviewDate) return setErr('Set a new review date for the extended experiment.');
     setBusy(true);
-    try { await setNseManagerVerdict(rec.id, nextV || null, nextR); } finally { setBusy(false); }
+    try {
+      if (isContinue) await extendNseExperiment(rec.id, reviewDate, v.count, remark);
+      else await setNseManagerVerdict(rec.id, choice || null, remark);
+      onClose();
+    } catch (e) { setErr(e.message || 'Could not save.'); setBusy(false); }
   };
+
+  const fld = 'border border-slate-300 rounded-md px-2 py-1.5 text-sm w-full';
   return (
-    <div className="flex flex-col gap-1" style={{ minWidth: 170 }}>
-      <select
-        className="border border-slate-300 rounded-md px-1.5 py-1 text-xs"
-        value={verdict}
-        disabled={busy}
-        onChange={(e) => { setVerdict(e.target.value); save(e.target.value, remark); }}
-      >
-        <option value="">— (use system)</option>
-        {MANAGER_VERDICTS.map((m) => <option key={m} value={m}>{m}</option>)}
-      </select>
-      <input
-        className="border border-slate-300 rounded-md px-1.5 py-1 text-xs"
-        placeholder="Why? (remark)"
-        value={remark}
-        disabled={busy}
-        onChange={(e) => setRemark(e.target.value)}
-        onBlur={() => save(verdict, remark)}
-      />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
+      <div className="card p-5 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div>
+            <h3 className="text-base font-semibold">Override verdict</h3>
+            <p className="text-xs text-slate-500 mt-0.5">{rec.show_name || `#${rec.show_id}`}</p>
+          </div>
+          <button className="text-slate-400 hover:text-slate-700 text-xl leading-none" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        <label className="text-xs text-slate-500 flex flex-col gap-1 mb-3">Verdict
+          <select className={fld} value={choice} onChange={(e) => setChoice(e.target.value)}>
+            {OPTIONS.map((o) => <option key={o.value || 'system'} value={o.value}>{o.label}</option>)}
+          </select>
+        </label>
+
+        <label className="text-xs text-slate-500 flex flex-col gap-1 mb-3">Remark
+          <textarea className={fld + ' resize-none'} rows={2} value={remark} onChange={(e) => setRemark(e.target.value)} placeholder="Why this call? (optional)" />
+        </label>
+
+        <label className="text-xs text-slate-500 flex flex-col gap-1 mb-1">
+          New review date{isContinue ? ' (required for extend)' : ' (only used when extending)'}
+          <input type="date" className={fld} value={reviewDate} disabled={!isContinue}
+            onChange={(e) => setReviewDate(e.target.value)} />
+        </label>
+        {isContinue && <div className="hint mb-2">Extends to 10 videos. The verdict stays “Continue…” until the next video goes live, then reverts to Tracking.</div>}
+
+        {err && <div className="text-xs text-red-600 mt-1 mb-2">{err}</div>}
+        <div className="flex gap-2 mt-3">
+          <button className="btn btn-primary" onClick={submit} disabled={busy}>{busy ? 'Saving…' : 'Submit'}</button>
+          <button className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -262,6 +282,7 @@ export default function NewShowExperimentsTab() {
   const userName = useStore((s) => s.userName);
   const setUserName = useStore((s) => s.setUserName);
   const deleteNseExperiment = useStore((s) => s.deleteNseExperiment);
+  const concludeNseExperiment = useStore((s) => s.concludeNseExperiment);
   const setNseShowId = useStore((s) => s.setNseShowId);
   const openDeepDive = useStore((s) => s.openDeepDive);
 
@@ -269,6 +290,8 @@ export default function NewShowExperimentsTab() {
   const today = todayStr();
   const [adding, setAdding] = useState(false);
   const [confirmDelId, setConfirmDelId] = useState(null); // experiment id pending delete
+  const [override, setOverride] = useState(null);         // { rec, v } pending verdict override
+  const [concludingId, setConcludingId] = useState(null); // experiment id mid-conclude
   const [flt, setFlt] = useState({ month: '', manager: '', language: '', bu: '', verdict: '' });
 
   const model = useMemo(() => buildModel(data), [data]);
@@ -342,8 +365,8 @@ export default function NewShowExperimentsTab() {
     ['Closed shows', filtered.filter((r) => CLOSED.has(r.v.effectiveVerdict)).length],
   ];
 
-  // 12 base columns; manager adds Manager verdict + the delete action column.
-  const colCount = manager ? 14 : 12;
+  // 13 columns: 12 data columns through Final verdict + a trailing actions column.
+  const colCount = 13;
 
   if (!nseConfigured) {
     return (
@@ -430,9 +453,8 @@ export default function NewShowExperimentsTab() {
               <th>Lifecycle verdict</th>
               <th>Success rate</th>
               <th>Review date</th>
-              {manager && <th>Manager verdict</th>}
               <th>Final verdict</th>
-              {manager && <th></th>}
+              <th>Conclude</th>
             </tr>
           </thead>
           <tbody>
@@ -472,14 +494,39 @@ export default function NewShowExperimentsTab() {
                     {fmtDate(activeReview)}
                     {rec.extended && <div className="hint">extended</div>}
                   </td>
-                  {manager && <td><ManagerVerdictCell rec={rec} /></td>}
-                  <td><VerdictCell rec={rec} v={v} /></td>
-                  {manager && (
-                    <td>
-                      <button className="text-slate-300 hover:text-red-600 text-xs" title="Delete experiment"
-                        onClick={() => setConfirmDelId(rec.id)}>✕</button>
-                    </td>
-                  )}
+                  <td>
+                    <VerdictCell v={v} />
+                    {manager && (
+                      <button className="text-xs text-blue-600 underline self-start mt-1" onClick={() => setOverride({ rec, v })}>
+                        Override verdict
+                      </button>
+                    )}
+                  </td>
+                  <td>
+                    <div className="flex flex-col items-start gap-1">
+                      {(() => {
+                        const failed = isNseFailed(v.effectiveVerdict);
+                        return (
+                          <button
+                            className={'text-xs ' + (failed ? 'text-slate-700 font-medium hover:underline' : 'text-slate-300 cursor-not-allowed')}
+                            disabled={!failed || concludingId === rec.id}
+                            title={failed ? 'Conclude → save to history' : 'Only failed experiments can be concluded'}
+                            onClick={async () => {
+                              if (!failed) return;
+                              setConcludingId(rec.id);
+                              try { await concludeNseExperiment(rec.id, v.effectiveVerdict); } finally { setConcludingId(null); }
+                            }}
+                          >
+                            {concludingId === rec.id ? 'Concluding…' : 'Conclude → history'}
+                          </button>
+                        );
+                      })()}
+                      {manager && (
+                        <button className="text-slate-300 hover:text-red-600 text-xs" title="Delete experiment"
+                          onClick={() => setConfirmDelId(rec.id)}>✕ delete</button>
+                      )}
+                    </div>
+                  </td>
                 </tr>
               );
             }) : (
@@ -490,6 +537,10 @@ export default function NewShowExperimentsTab() {
           </tbody>
         </table>
       </div>
+
+      {override && (
+        <OverrideVerdictModal rec={override.rec} v={override.v} onClose={() => setOverride(null)} />
+      )}
 
       {confirmDelId && (
         <DeleteConfirm

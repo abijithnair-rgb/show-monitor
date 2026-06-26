@@ -46,6 +46,7 @@ export default function ShowManagerTab() {
   const groupActions = useStore((s) => s.groupActions);
   const groupHistory = useStore((s) => s.groupHistory);
   const nse = useStore((s) => s.nse);
+  const nseHistory = useStore((s) => s.nseHistory);
   const actionsConfigured = useStore((s) => s.actionsConfigured);
   const userName = useStore((s) => s.userName);
   const openDeepDive = useStore((s) => s.openDeepDive);
@@ -165,13 +166,22 @@ export default function ShowManagerTab() {
   // by its assigned show manager so the single-manager view can list them.
   const nseAll = useMemo(() => {
     const today = todayStr();
-    return Object.values(nse || {}).map((rec) => {
+    const live = Object.values(nse || {}).map((rec) => {
       const s = byId.get(String(rec.show_id)) || null;
       const eps = fatIdx?.get(String(rec.show_id))?.eps || null;
       const v = computeNseVerdict(rec, s, data.hdcRows, eps, today);
-      return { rec, s, v };
+      return { rec, s, v, concluded: null };
     });
-  }, [nse, byId, fatIdx, data.hdcRows]);
+    // Concluded (failed) experiments live in nseHistory — keep their stored final
+    // verdict, but recompute the other columns so the row stays populated.
+    const concluded = Object.values(nseHistory || {}).map((rec) => {
+      const s = byId.get(String(rec.show_id)) || null;
+      const eps = fatIdx?.get(String(rec.show_id))?.eps || null;
+      const v = computeNseVerdict(rec, s, data.hdcRows, eps, today);
+      return { rec, s, v: { ...v, effectiveVerdict: rec.final_verdict || v.effectiveVerdict }, concluded: rec.concluded_at || true };
+    });
+    return [...live, ...concluded];
+  }, [nse, nseHistory, byId, fatIdx, data.hdcRows]);
 
   // Period list, generated from the actual data coverage (hdc publish dates, ep
   // approved dates, experiment dates) so we never offer empty future periods.
@@ -415,7 +425,7 @@ export default function ShowManagerTab() {
                 <tr><th>Pickup</th><th>Show</th><th>Show id</th><th>Status</th><th>Videos</th><th>Lifecycle</th><th>Success rate</th><th>Launch</th><th>Review</th><th>Final verdict</th></tr>
               </thead>
               <tbody>
-                {nseRows.length ? nseRows.map(({ rec, s, v }) => {
+                {nseRows.length ? nseRows.map(({ rec, s, v, concluded }) => {
                   const sr = v.stage === 2 ? v.sr2 : v.sr1;
                   const activeReview = rec.extended ? rec.review_date2 : rec.review_date;
                   const launchTag = v.tags.find((t) => t === 'launch successful' || t === 'launch date missed');
@@ -436,7 +446,10 @@ export default function ShowManagerTab() {
                       <td>{sr && sr.pct != null ? <span className="font-semibold">{sr.pct}%</span> : <span className="text-slate-300">—</span>}{sr && sr.n ? <div className="hint">{sr.pass}/{sr.n}</div> : null}</td>
                       <td className="whitespace-nowrap">{fmtDate(rec.launch_date)}{launchTag && <div><span className={'chip ' + (launchTag === 'launch successful' ? 'chip-green' : 'chip-amber')}>{launchTag}</span></div>}</td>
                       <td className="whitespace-nowrap">{fmtDate(activeReview)}{rec.extended && <div className="hint">extended</div>}</td>
-                      <td>{v.effectiveVerdict ? <span className={'chip ' + nseVerdictChip(v.effectiveVerdict)}>{v.effectiveVerdict}</span> : <span className="chip chip-grey">Tracking</span>}</td>
+                      <td>
+                        {v.effectiveVerdict ? <span className={'chip ' + nseVerdictChip(v.effectiveVerdict)}>{v.effectiveVerdict}</span> : <span className="chip chip-grey">Tracking</span>}
+                        {concluded && <div className="hint" style={{ color: '#475569' }}>concluded{typeof concluded === 'string' ? ` ${fmtDate(concluded)}` : ''}</div>}
+                      </td>
                     </tr>
                   );
                 }) : (
