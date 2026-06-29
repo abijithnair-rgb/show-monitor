@@ -150,10 +150,8 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
       onClose?.();
     });
   }
-  const saveDates = () => run(() => updateClaimFields(claim.id, { action_date: actionDate || null, review_date: reviewDate || null }));
   const override = (v) => run(() => updateClaimFields(claim.id, { verdict_override: v }));
   const archive = () => run(async () => { await archiveShow(claim.id, verdict, snapshotNow, concludeNote.trim() || null); onClose?.(); });
-  const datesChanged = (claim?.action_date || '') !== actionDate || (claim?.review_date || '') !== reviewDate;
 
   // ---- Summary block (shared by read-only + claimed views) ----
   const summary = claim && (
@@ -343,12 +341,10 @@ export default function PickupPanel({ s, snapshotNow, onClose, readOnly = false,
         // ---- Action Queue: full status + controls ----
         <div className="flex flex-col gap-3">
           {summary}
+          {/* Dates are fixed once the experiment is picked up — display only. */}
           <div className="flex gap-4 flex-wrap items-end">
-            <DateField label="Actions to be taken by" value={actionDate} set={setActionDate} readOnly={!canManage} />
-            <DateField label="To be reviewed on" value={reviewDate} set={setReviewDate} readOnly={!canManage} />
-            {canManage && datesChanged && (
-              <button className="btn btn-ghost text-xs" disabled={busy} onClick={saveDates}>{busy ? 'Saving…' : 'Save dates'}</button>
-            )}
+            <DateField label="Actions to be taken by" value={actionDate} readOnly />
+            <DateField label="To be reviewed on" value={reviewDate} readOnly />
           </div>
           {(() => { const p = sincePickupParts(claim.snapshot, snapshotNow); return p.length ? <Numbers title="Since pickup" snap={snapshotNow} /> : null; })()}
           {manageByManager && <div className="hint">Managing as {userName} (manager) — this experiment is owned by {claim.by}.</div>}
