@@ -151,7 +151,7 @@ export default function ExperimentsTab() {
                       </td>
                       <td>{claim.note ? <div className="text-xs text-slate-600" style={{ maxWidth: 180 }}>{claim.note}</div> : <span className="text-slate-300">—</span>}</td>
                       <td><span className={'chip ' + vm.chip}>{vm.label}</span></td>
-                      <td><GroupRowControls claim={claim} verdict={verdict} /></td>
+                      <td><GroupRowControls claim={claim} verdict={verdict} cur={cur} /></td>
                     </tr>
                   );
                 }

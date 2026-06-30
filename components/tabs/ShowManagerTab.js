@@ -157,12 +157,15 @@ export default function ShowManagerTab() {
     for (const arr of Object.values(groupHistory || {})) {
       for (const rec of arr || []) {
         const mKey = rec.metric || groupMetricKeyOfTarget(rec.target);
+        // Result = the snapshot captured at conclusion; fall back to recomputing
+        // the live aggregate for legacy records that lack a final_snapshot.
+        const finalCur = rec.final_snapshot || groupCurrentFor(rec, scopeShows(model2, rec.scope, rec.scope_value), data);
         out.push({
           id: rec.id || `${rec.scope}:${rec.scope_value}:${rec.concluded_at}`, claim: rec, cur: null, concluded: true,
           by: rec.by, showId: null, s: null, isGroup: true,
           title: scopeValueLabel(rec.scope, rec.scope_value), scopeKind: scopeMetaLabel(rec.scope),
           metricText: groupMetricLabel(mKey), targetStr: groupTargetText(rec.target),
-          pickupStr: groupPickupStr(mKey, rec.snapshot), resultStr: rec.final_snapshot ? groupTrackedValueText(rec.target, rec.final_snapshot) : '—',
+          pickupStr: groupPickupStr(mKey, rec.snapshot), resultStr: groupTrackedValueText(rec.target, finalCur),
           claimedAt: slice10(rec.claimed_at), concludedAt: slice10(rec.concluded_at),
           metric: mKey, target: rec.target,
           verdict: rec.verdict === 'reached' ? 'reached' : 'failed',

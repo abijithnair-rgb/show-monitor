@@ -207,7 +207,7 @@ function GroupPickupForm({ scope, scopeValue, metricKey, snapshot, onClose, onSa
 // ---- Running group-experiment row controls ----
 // Verdict is auto-judged (no manual reached/failed override). Owner or manager
 // may conclude a decided/review-due experiment; only a manager (Deepak) may discard.
-export function GroupRowControls({ claim, verdict }) {
+export function GroupRowControls({ claim, verdict, cur }) {
   const userName = useStore((s) => s.userName);
   const archiveGroupExp = useStore((s) => s.archiveGroupExp);
   const releaseGroupExp = useStore((s) => s.releaseGroupExp);
@@ -222,7 +222,9 @@ export function GroupRowControls({ claim, verdict }) {
   return (
     <div className="flex gap-2 items-center flex-wrap text-xs" onClick={(e) => e.stopPropagation()}>
       {canConclude && (
-        <button className="text-slate-700 font-medium hover:underline disabled:opacity-50" disabled={busy} onClick={() => run(() => archiveGroupExp(claim.id, verdict))}>conclude</button>
+        // Capture the current aggregate as the final snapshot so the concluded
+        // record keeps its result value (groupCurrentValue reads it back).
+        <button className="text-slate-700 font-medium hover:underline disabled:opacity-50" disabled={busy} onClick={() => run(() => archiveGroupExp(claim.id, verdict, cur || null))}>conclude</button>
       )}
       {canDiscard && (
         <button className="text-slate-400 hover:text-slate-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => run(() => releaseGroupExp(claim.id))}>discard</button>
@@ -475,7 +477,7 @@ export default function GroupExperimentsTable() {
                     </td>
                     <td>{claim.note ? <div className="text-xs text-slate-600" style={{ maxWidth: 180 }}>{claim.note}</div> : <span className="text-slate-300">—</span>}</td>
                     <td><span className={'chip ' + vm.chip}>{vm.label}</span></td>
-                    <td><GroupRowControls claim={claim} verdict={verdict} /></td>
+                    <td><GroupRowControls claim={claim} verdict={verdict} cur={cur} /></td>
                   </tr>
                 );
               })}
