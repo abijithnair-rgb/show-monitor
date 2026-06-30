@@ -11,7 +11,9 @@ export const dynamic = 'force-dynamic';
 const KEY = 'sm:groups';
 const HKEY = 'sm:groups_history';
 
-const VALID_SCOPES = new Set(['language', 'bu', 'poc']);
+// 'category' is the composite scope (category, optionally bifurcated by language
+// as "<category>::<lang>"); its scope_value is opaque to the server.
+const VALID_SCOPES = new Set(['language', 'bu', 'category', 'poc']);
 
 function newId(scope, value) {
   return `${scope}:${value}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
@@ -138,7 +140,7 @@ export async function POST(req) {
     if (op === 'claim') {
       const scope = String(body?.scope || '');
       const scopeValue = String(body?.scope_value || '').trim();
-      if (!VALID_SCOPES.has(scope)) return Response.json({ error: 'A valid scope (language/bu/poc) is required.' }, { status: 400 });
+      if (!VALID_SCOPES.has(scope)) return Response.json({ error: 'A valid scope (language/bu/category/poc) is required.' }, { status: 400 });
       if (!scopeValue) return Response.json({ error: 'scope_value is required.' }, { status: 400 });
       const by = String(body?.by || '').trim();
       if (!by) return Response.json({ error: 'A name (by) is required.' }, { status: 400 });
