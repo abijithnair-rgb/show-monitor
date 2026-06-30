@@ -6,14 +6,15 @@ import { buildHdcIndex, windowedHdcRate } from '@/lib/hdc';
 import { windowedSuccessRate } from '@/lib/metrics';
 import {
   ROSTER, currentFor, metricLabel, targetText, trackedValueText, evalVerdict, VERDICT_META, reviewDue,
-  weekKey, monthKey, weekRange, monthRange, todayStr,
+  weekKey, monthKey, weekRange, monthRange, todayStr, evalConstraints,
 } from '@/lib/ownership';
 import { computeNseVerdict, V } from '@/lib/nseVerdict';
 import {
   scopeShows, scopeValueLabel, scopeMetaLabel,
   groupCurrentFor, groupEvalVerdict, groupTargetText, groupTrackedValueText,
-  groupMetricLabel, groupMetricKeyOfTarget, groupMetric, liveMetricValue,
+  groupMetricLabel, groupMetricKeyOfTarget, groupMetric, liveMetricValue, evalGroupConstraints,
 } from '@/lib/groupExperiments';
+import { ConstraintChips } from '@/components/ConstraintControls';
 import { fmtDate, LANG_NAMES } from '@/lib/format';
 
 const slice10 = (v) => String(v || '').slice(0, 10);
@@ -28,6 +29,21 @@ const groupPickupStr = (mKey, snapshot) => {
   const pv = liveMetricValue(mKey, snapshot);
   return pv != null ? fmtGroupVal(mKey, pv) : '—';
 };
+
+// "remark" CTA for a concluded experiment's conclusion note — click to reveal.
+// stopPropagation so it doesn't trigger the row's Deep-Dive navigation.
+function ConcludeNoteCell({ note }) {
+  const [open, setOpen] = useState(false);
+  if (!note) return null;
+  return (
+    <div className="mt-1" onClick={(e) => e.stopPropagation()}>
+      <button className="text-xs text-blue-600 underline" onClick={() => setOpen((o) => !o)}>
+        {open ? 'hide remark' : 'view remark'}
+      </button>
+      {open && <div className="text-xs text-slate-600 mt-1" style={{ maxWidth: 220 }}>{note}</div>}
+    </div>
+  );
+}
 
 // Terminal NSE verdicts that count as a failed new-show experiment.
 const NSE_FAIL = new Set([V.MIN_VIDEO_FAIL, V.LAUNCH_FAIL, V.REPLACE, V.REPLACE_SR, V.STOP_LIFECYCLE, V.STOP_CONTRIB]);
@@ -117,6 +133,8 @@ export default function ShowManagerTab() {
         metric: claim.metric, target: claim.target,
         verdict: cur ? evalVerdict(claim, cur) : 'tracking',
         reviewDate: claim.review_date || null,
+        constraintsEval: (s && claim.constraints?.length) ? evalConstraints(claim, s, data, hdcIdx, fatIdx) : [],
+        concludeNote: null,
       });
     }
     // ---- per-show experiments (concluded → history) ----
@@ -134,6 +152,8 @@ export default function ShowManagerTab() {
           metric: rec.metric, target: rec.target,
           verdict: rec.verdict === 'reached' ? 'reached' : 'failed',
           reviewDate: rec.review_date || null,
+          constraintsEval: (s && rec.constraints?.length) ? evalConstraints(rec, s, data, hdcIdx, fatIdx) : [],
+          concludeNote: rec.conclude_note || null,
         });
       }
     }
@@ -151,15 +171,18 @@ export default function ShowManagerTab() {
         metric: mKey, target: claim.target,
         verdict: groupEvalVerdict(claim, cur),
         reviewDate: claim.review_date || null,
+        constraintsEval: claim.constraints?.length ? evalGroupConstraints(claim, sh, data) : [],
+        concludeNote: null,
       });
     }
     // ---- group experiments (concluded → history) ----
     for (const arr of Object.values(groupHistory || {})) {
       for (const rec of arr || []) {
         const mKey = rec.metric || groupMetricKeyOfTarget(rec.target);
+        const sh = scopeShows(model2, rec.scope, rec.scope_value);
         // Result = the snapshot captured at conclusion; fall back to recomputing
         // the live aggregate for legacy records that lack a final_snapshot.
-        const finalCur = rec.final_snapshot || groupCurrentFor(rec, scopeShows(model2, rec.scope, rec.scope_value), data);
+        const finalCur = rec.final_snapshot || groupCurrentFor(rec, sh, data);
         out.push({
           id: rec.id || `${rec.scope}:${rec.scope_value}:${rec.concluded_at}`, claim: rec, cur: null, concluded: true,
           by: rec.by, showId: null, s: null, isGroup: true,
@@ -170,6 +193,8 @@ export default function ShowManagerTab() {
           metric: mKey, target: rec.target,
           verdict: rec.verdict === 'reached' ? 'reached' : 'failed',
           reviewDate: rec.review_date || null,
+          constraintsEval: rec.constraints?.length ? evalGroupConstraints(rec, sh, data) : [],
+          concludeNote: rec.conclude_note || null,
         });
       }
     }
@@ -522,12 +547,16 @@ export default function ShowManagerTab() {
                       )}
                     </td>
                     <td><span className="chip chip-purple">{e.metricText}</span></td>
-                    <td className="text-sm text-slate-600">{e.targetStr}</td>
+                    <td className="text-sm text-slate-600">
+                      {e.targetStr}
+                      {e.constraintsEval?.length > 0 && <ConstraintChips evaluated={e.constraintsEval} />}
+                    </td>
                     <td>{e.pickupStr}</td>
                     <td className="font-semibold">{e.resultStr}</td>
                     <td className="text-sm text-slate-600">
                       {e.concluded ? `concluded ${fmtDate(e.concludedAt)}` : (e.reviewDate ? `review ${fmtDate(e.reviewDate)}` : '—')}
                       {due && <div className="hint" style={{ color: '#991b1b' }}>due</div>}
+                      {e.concluded && <ConcludeNoteCell note={e.concludeNote} />}
                     </td>
                     <td><span className={'chip ' + vm.chip}>{vm.label}</span></td>
                   </tr>
