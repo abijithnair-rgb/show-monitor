@@ -12,11 +12,22 @@ import { computeNseVerdict, V } from '@/lib/nseVerdict';
 import {
   scopeShows, scopeValueLabel, scopeMetaLabel,
   groupCurrentFor, groupEvalVerdict, groupTargetText, groupTrackedValueText,
-  groupMetricLabel, groupMetricKeyOfTarget,
+  groupMetricLabel, groupMetricKeyOfTarget, groupMetric, liveMetricValue,
 } from '@/lib/groupExperiments';
 import { fmtDate, LANG_NAMES } from '@/lib/format';
 
 const slice10 = (v) => String(v || '').slice(0, 10);
+
+// Format a group metric value (SR shows %), matching the Experiments tab.
+const fmtGroupVal = (key, v) => {
+  if (v == null) return '—';
+  return groupMetric(key)?.unit === '%' ? `${v}%` : v.toLocaleString('en-IN');
+};
+// Status-at-pickup for a group claim = the metric value captured in its snapshot.
+const groupPickupStr = (mKey, snapshot) => {
+  const pv = liveMetricValue(mKey, snapshot);
+  return pv != null ? fmtGroupVal(mKey, pv) : '—';
+};
 
 // Terminal NSE verdicts that count as a failed new-show experiment.
 const NSE_FAIL = new Set([V.MIN_VIDEO_FAIL, V.LAUNCH_FAIL, V.REPLACE, V.REPLACE_SR, V.STOP_LIFECYCLE, V.STOP_CONTRIB]);
@@ -135,7 +146,7 @@ export default function ShowManagerTab() {
         id: claim.id, claim, cur, concluded: false, by: claim.by, showId: null, s: null, isGroup: true,
         title: scopeValueLabel(claim.scope, claim.scope_value), scopeKind: scopeMetaLabel(claim.scope),
         metricText: groupMetricLabel(mKey), targetStr: groupTargetText(claim.target),
-        pickupStr: '—', resultStr: groupTrackedValueText(claim.target, cur),
+        pickupStr: groupPickupStr(mKey, claim.snapshot), resultStr: groupTrackedValueText(claim.target, cur),
         claimedAt: slice10(claim.claimed_at), concludedAt: null,
         metric: mKey, target: claim.target,
         verdict: groupEvalVerdict(claim, cur),
@@ -151,7 +162,7 @@ export default function ShowManagerTab() {
           by: rec.by, showId: null, s: null, isGroup: true,
           title: scopeValueLabel(rec.scope, rec.scope_value), scopeKind: scopeMetaLabel(rec.scope),
           metricText: groupMetricLabel(mKey), targetStr: groupTargetText(rec.target),
-          pickupStr: '—', resultStr: rec.final_snapshot ? groupTrackedValueText(rec.target, rec.final_snapshot) : '—',
+          pickupStr: groupPickupStr(mKey, rec.snapshot), resultStr: rec.final_snapshot ? groupTrackedValueText(rec.target, rec.final_snapshot) : '—',
           claimedAt: slice10(rec.claimed_at), concludedAt: slice10(rec.concluded_at),
           metric: mKey, target: rec.target,
           verdict: rec.verdict === 'reached' ? 'reached' : 'failed',
