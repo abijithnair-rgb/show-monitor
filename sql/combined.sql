@@ -718,35 +718,29 @@ video_failure_mode AS (
   JOIN all_series s ON s.series_id = vm.series_id
   LEFT JOIN language_retention_thresholds lt ON lt.language = s.language
 ),
--- Authoritative completion data from analytics_content.content_performance.
--- IMPORTANT: replace `<COMP_RATE_COL>` below with the actual completion-rate
--- column name in your content_performance table (the table has `targ_comp`
--- for target — the achieved rate column lives alongside it). Common names
--- to check in the schema:
---   comp_rate, completion_rate, completion_rate_pct, achieved_comp,
---   d0_comp_rate, completion, comp_pct
--- Run `SELECT column_name FROM `seekho-c084b.analytics_content.INFORMATION_SCHEMA.COLUMNS`
---      WHERE table_name = 'content_performance'`
--- to list them, then swap the alias on the two lines marked below.
--- analytics_content.content_performance: source for per-video TARGET
--- completion (`targ_comp`) and the canonical success/failure flag (`status`).
--- Completion itself is computed from raw watching at the 70% bar — the
--- completion-rate column on content_performance is not read here.
+-- Authoritative completion data from analytics_content.content_performance:
+-- per-video TARGET completion (`targ_comp`), the ACTUAL CMS completion %
+-- (`completion_rate` = completes ÷ starts × 100), and the canonical
+-- success/failure flag (`status`).
 --
 -- IMPORTANT: We do NOT filter by snapshot_tag. The team's current
--- content_performance pipeline does not consistently use the 'D1'/'D12'/
--- 'D123' tag values that earlier versions of this monitor relied on, so
+-- content_performance pipeline does not consistently use the 'H1'/'H12'/
+-- 'H123' tag values that earlier versions of this monitor relied on, so
 -- a snapshot_tag filter would return zero rows and leave targ_comp blank
 -- everywhere. Instead we aggregate per series_id:
 --   • targ_comp is a per-video property (depends on duration); it doesn't
 --     vary across snapshot rows for the same video, so MAX returns the
 --     value (NULL-aware: MAX ignores NULLs).
 --   • status: MAX(1, 0, NULL) = 1 — picks the most positive flag.
+--   • completion_rate DOES vary across snapshots (it climbs as views/completes
+--     accumulate), so take the MOST-SETTLED reading = the snapshot row with the
+--     largest `starts` (biggest sample), via ARRAY_AGG ORDER BY starts DESC.
 cp AS (
   SELECT
     series_id,
     MAX(targ_comp) AS targ_comp,
-    MAX(status)    AS video_status
+    MAX(status)    AS video_status,
+    ARRAY_AGG(completion_rate IGNORE NULLS ORDER BY starts DESC LIMIT 1)[SAFE_OFFSET(0)] AS cms_completion_rate
   FROM `seekho-c084b.analytics_content.content_performance`
   GROUP BY series_id
 ),
@@ -812,6 +806,11 @@ video_with_deltas AS (
     ROUND(SAFE_DIVIDE(prev_vmh123.h123_completion_rate_pct, NULLIF(prev_cp.targ_comp, 0)) * 100, 2) AS prev_comp_eff_h123_pct,
     ROUND(SAFE_DIVIDE(vmh123.h123_completion_rate_pct, NULLIF(cp_curr.targ_comp, 0)) * 100
         - SAFE_DIVIDE(prev_vmh123.h123_completion_rate_pct, NULLIF(prev_cp.targ_comp, 0)) * 100, 2) AS comp_eff_h123_delta,
+    -- CMS comp efficiency = the ACTUAL CMS completion % (content_performance.
+    -- completion_rate) ÷ per-video target × 100 — the exact achievement-vs-target
+    -- the CMS records (distinct from the watching-derived H123 figure above).
+    cp_curr.cms_completion_rate AS cms_completion_rate_pct,
+    ROUND(SAFE_DIVIDE(cp_curr.cms_completion_rate, NULLIF(cp_curr.targ_comp, 0)) * 100, 2) AS comp_eff_cms_pct,
     prev_cp.targ_comp AS prev_targ_comp,
     -- Canonical per-video success flag from content_performance.status.
     -- 1 = successful, 0 = failed, NULL = not yet evaluated.
@@ -1208,6 +1207,7 @@ SELECT
   iw.prev_d0_completion_rate_pct, iw.completion_rate_delta_ppt,
   iw.comp_eff_pct, iw.prev_comp_eff_pct, iw.comp_eff_delta, iw.prev_targ_comp,
   iw.comp_eff_h123_pct, iw.prev_comp_eff_h123_pct, iw.comp_eff_h123_delta,
+  iw.cms_completion_rate_pct, iw.comp_eff_cms_pct,
   iw.hook_retention_h123_pct AS hook_retention_pct,
   iw.mid_retention_h123_pct  AS mid_retention_pct,
   iw.end_retention_h123_pct  AS end_retention_pct,
