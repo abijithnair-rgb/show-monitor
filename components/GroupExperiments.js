@@ -6,7 +6,7 @@ import { fmtDate } from '@/lib/format';
 import { POCS, canManageClaim, isManager, EXPERIMENT_MAX_DAYS } from '@/lib/ownership';
 import {
   GROUP_SCOPES, scopeMetaLabel, scopeOptions, scopeShows, scopeValueLabel,
-  categoryValues, makeCategoryScopeValue, parseCategoryScopeValue,
+  scopeBaseValues, makeScopeValue, parseScopeValue, isCompositeScope,
   GROUP_METRICS, groupMetric, groupMetricLabel,
   groupLiveSnapshot, liveMetricValue,
   makeGroupTarget, defaultGroupOp, groupTargetText, groupMetricKeyOfTarget,
@@ -271,18 +271,20 @@ export function AddGroupExperimentModal({ onClose }) {
     return map;
   }, [groupActions, scope, scopeValue]);
 
-  // Category scope is two-level: pick a language first (or "All languages"),
-  // then the category within it. The stored value stays "category" / "category::lang".
-  const catSel = parseCategoryScopeValue(scopeValue);
-  const catLangOptions = scope === 'category' ? scopeOptions(model, 'language') : [];
-  const catOptions = scope === 'category' ? categoryValues(model, catSel.lang) : [];
+  // Composite scopes (category / business unit) are two-level: pick a language
+  // first (or "All languages"), then the base value within it. The stored value
+  // stays "<base>" / "<base>::<lang>".
+  const composite = isCompositeScope(scope);
+  const compSel = parseScopeValue(scopeValue);
+  const compLangOptions = composite ? scopeOptions(model, 'language') : [];
+  const compBaseOptions = composite ? scopeBaseValues(model, scope, compSel.lang) : [];
 
-  // Switching language keeps the current category if it exists in that language,
-  // otherwise lands on the first category available there (never reverts language).
+  // Switching language keeps the current base if it exists in that language,
+  // otherwise lands on the first base available there (never reverts language).
   const onPickLanguage = (lang) => {
-    const cats = categoryValues(model, lang);
-    const cat = cats.some((c) => c.value === catSel.category) ? catSel.category : (cats[0]?.value || catSel.category);
-    setScopeValue(makeCategoryScopeValue(cat, lang));
+    const bases = scopeBaseValues(model, scope, lang);
+    const base = bases.some((b) => b.value === compSel.base) ? compSel.base : (bases[0]?.value || compSel.base);
+    setScopeValue(makeScopeValue(base, lang));
   };
 
   return (
@@ -292,7 +294,7 @@ export function AddGroupExperimentModal({ onClose }) {
           <div>
             <h2 className="text-lg font-semibold mb-1">Add a group experiment</h2>
             <p className="text-sm text-slate-500">
-              Move a whole language, business unit, category (optionally one language of it) or POC — pick up an experiment on any movement metric (L0–L5, success rate, supply).
+              Move a whole language, business unit or category (each optionally scoped to one language) or POC — pick up an experiment on any movement metric (L0–L5, success rate, supply).
             </p>
           </div>
           <button className="text-slate-400 hover:text-slate-700 text-xl leading-none" onClick={onClose} aria-label="Close">×</button>
@@ -309,24 +311,24 @@ export function AddGroupExperimentModal({ onClose }) {
               </button>
             ))}
           </div>
-          {scope === 'category' ? (
+          {composite ? (
             <>
               <label className="text-xs text-slate-500 flex flex-col gap-1">
                 Language
                 <select className="border border-slate-300 rounded-md px-2 py-1.5 text-sm text-slate-800"
-                  value={catSel.lang || ''}
+                  value={compSel.lang || ''}
                   onChange={(e) => onPickLanguage(e.target.value)}>
                   <option value="">All languages</option>
-                  {catLangOptions.map((o) => <option key={o.value} value={o.value}>{o.label} ({o.n})</option>)}
+                  {compLangOptions.map((o) => <option key={o.value} value={o.value}>{o.label} ({o.n})</option>)}
                 </select>
               </label>
               <label className="text-xs text-slate-500 flex flex-col gap-1">
-                Category
+                {scopeMetaLabel(scope)}
                 <SearchSelect
-                  value={catSel.category}
-                  options={catOptions.map((o) => ({ value: o.value, label: `${o.label} (${o.n})` }))}
-                  placeholder="Search category…"
-                  onChange={(cat) => setScopeValue(makeCategoryScopeValue(cat, catSel.lang))} />
+                  value={compSel.base}
+                  options={compBaseOptions.map((o) => ({ value: o.value, label: `${o.label} (${o.n})` }))}
+                  placeholder={`Search ${scopeMetaLabel(scope).toLowerCase()}…`}
+                  onChange={(base) => setScopeValue(makeScopeValue(base, compSel.lang))} />
               </label>
             </>
           ) : (
